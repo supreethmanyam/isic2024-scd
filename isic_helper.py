@@ -20,7 +20,7 @@ def time_to_str(duration, unit='sec'):
 
 
 def get_folds():
-    folds_df = pd.read_csv("/kaggle/input/isic-scd-artifacts/folds.csv")
+    folds_df = pd.read_csv("/kaggle/input/isic-scd-folds/folds.csv")
     return folds_df
 
 
