@@ -10,55 +10,25 @@ from sklearn.metrics import roc_curve, auc
 from sklearn.metrics import roc_auc_score as compute_auc
 
 
-class DotDict(Namespace):
-    """A simple class that builds upon `argparse.Namespace`
-    in order to make chained attributes possible."""
+def time_to_str(duration, unit='sec'):
+    if unit == 'min':
+        minutes = int(duration // 60)
+        seconds = duration % 60
+        return f"{minutes} min {seconds:.2f} sec"
+    else:
+        return f"{duration:.2f} sec"
 
-    def __init__(self, temp=False, key=None, parent=None) -> None:
-        self._temp = temp
-        self._key = key
-        self._parent = parent
 
-    def __eq__(self, other):
-        if not isinstance(other, DotDict):
-            return NotImplemented
-        return vars(self) == vars(other)
+def get_folds():
+    folds_df = pd.read_csv("/kaggle/input/isic-scd-artifacts/folds.csv")
+    return folds_df
 
-    def __getattr__(self, __name: str) -> Any:
-        if __name not in self.__dict__ and not self._temp:
-            self.__dict__[__name] = DotDict(temp=True, key=__name, parent=self)
-        else:
-            del self._parent.__dict__[self._key]
-            raise AttributeError("No attribute '%s'" % __name)
-        return self.__dict__[__name]
 
-    def __repr__(self) -> str:
-        item_keys = [k for k in self.__dict__ if not k.startswith("_")]
-
-        if len(item_keys) == 0:
-            return "DotDict()"
-        elif len(item_keys) == 1:
-            key = item_keys[0]
-            val = self.__dict__[key]
-            return "DotDict(%s=%s)" % (key, repr(val))
-        else:
-            return "DotDict(%s)" % ", ".join(
-                "%s=%s" % (key, repr(val)) for key, val in self.__dict__.items()
-            )
-
-    @classmethod
-    def from_dict(cls, original: typing.Mapping[str, any]) -> "DotDict":
-        """Create a DotDict from a (possibly nested) dict `original`.
-        Warning: this method should not be used on very deeply nested inputs,
-        since it's recursively traversing the nested dictionary values.
-        """
-        dd = DotDict()
-        for key, value in original.items():
-            if isinstance(value, typing.Mapping):
-                value = cls.from_dict(value)
-            setattr(dd, key, value)
-        return dd
-
+def set_seed(seed=0):
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    
 
 def compute_pauc(y_true, y_pred, min_tpr: float=0.80) -> float:
     '''
@@ -113,21 +83,52 @@ def compute_pauc(y_true, y_pred, min_tpr: float=0.80) -> float:
     
     return(partial_auc)
 
-    
-def get_folds():
-    folds_df = pd.read_csv("/kaggle/input/isic-scd-artifacts/folds.csv")
-    return folds_df
 
+class DotDict(Namespace):
+    """A simple class that builds upon `argparse.Namespace`
+    in order to make chained attributes possible."""
 
-def time_to_str(duration, unit='sec'):
-    if unit == 'min':
-        minutes = int(duration // 60)
-        seconds = duration % 60
-        return f"{minutes} min {seconds:.2f} sec"
-    else:
-        return f"{duration:.2f} sec"
+    def __init__(self, temp=False, key=None, parent=None) -> None:
+        self._temp = temp
+        self._key = key
+        self._parent = parent
 
-def set_seed(seed=0):
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    def __eq__(self, other):
+        if not isinstance(other, DotDict):
+            return NotImplemented
+        return vars(self) == vars(other)
+
+    def __getattr__(self, __name: str) -> Any:
+        if __name not in self.__dict__ and not self._temp:
+            self.__dict__[__name] = DotDict(temp=True, key=__name, parent=self)
+        else:
+            del self._parent.__dict__[self._key]
+            raise AttributeError("No attribute '%s'" % __name)
+        return self.__dict__[__name]
+
+    def __repr__(self) -> str:
+        item_keys = [k for k in self.__dict__ if not k.startswith("_")]
+
+        if len(item_keys) == 0:
+            return "DotDict()"
+        elif len(item_keys) == 1:
+            key = item_keys[0]
+            val = self.__dict__[key]
+            return "DotDict(%s=%s)" % (key, repr(val))
+        else:
+            return "DotDict(%s)" % ", ".join(
+                "%s=%s" % (key, repr(val)) for key, val in self.__dict__.items()
+            )
+
+    @classmethod
+    def from_dict(cls, original: typing.Mapping[str, any]) -> "DotDict":
+        """Create a DotDict from a (possibly nested) dict `original`.
+        Warning: this method should not be used on very deeply nested inputs,
+        since it's recursively traversing the nested dictionary values.
+        """
+        dd = DotDict()
+        for key, value in original.items():
+            if isinstance(value, typing.Mapping):
+                value = cls.from_dict(value)
+            setattr(dd, key, value)
+        return dd
