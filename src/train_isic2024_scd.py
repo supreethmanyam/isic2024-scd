@@ -63,7 +63,7 @@ def dev_augment(image_size):
                 shift_limit=0.1, scale_limit=0.1, rotate_limit=15, border_mode=0, p=0.85
             ),
             A.Resize(image_size, image_size),
-            #         A.Cutout(max_h_size=int(image_size * 0.375), max_w_size=int(image_size * 0.375), num_holes=1, p=0.7),
+            # A.Cutout(max_h_size=int(image_size * 0.375), max_w_size=int(image_size * 0.375), num_holes=1, p=0.7),
             ToTensorV2(),
         ],
         p=1.0,
@@ -384,7 +384,7 @@ def main(args):
     model = ISICNet(model_name=args.model_name, pretrained=True, infer=False)
     model = model.to(accelerator.device)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate / 10)
     lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
         max_lr=args.learning_rate,

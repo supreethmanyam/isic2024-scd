@@ -40,7 +40,7 @@ class Config:
     val_batch_size: int = 512
     num_workers: int = 4
     learning_rate: float = 5e-4
-    num_epochs: int = 2
+    num_epochs: int = 5
     tta: bool = True
     seed: int = 2022
 
@@ -130,7 +130,7 @@ def download_data(path: Path):
     mounts=[train_script_mount],
     volumes={str(INPUT_DIR): input_volume, str(ARTIFACTS_DIR): artifacts_volume},
     gpu=GPU_CONFIG,
-    timeout=60 * 60 * 2,  # 2 hours
+    timeout=60 * 60 * 5,  # 5 hours
 )
 def train(model_name: str, version: str, fold: int):
     import subprocess
