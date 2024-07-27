@@ -196,6 +196,7 @@ def train(model_name: str, version: str, fold: int):
             f"--num_epochs={config.num_epochs}",
             "--tta" if config.tta else "",
             f"--seed={config.seed}",
+            # "--debug",
         ]
     )
     print(subprocess.list2cmdline(commands))

@@ -300,16 +300,14 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--seed", type=int, default=None, help="A seed for reproducible training."
     )
-    # parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
+    parser.add_argument(
+        "--debug", action="store_true", default=False, help="Use a small subset of the data for debugging."
+    )
 
     if input_args is not None:
         args = parser.parse_args(input_args)
     else:
         args = parser.parse_args()
-
-    # env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
-    # if env_local_rank != -1 and env_local_rank != args.local_rank:
-    #     args.local_rank = env_local_rank
 
     return args
 
@@ -345,9 +343,10 @@ def main(args):
     train_metadata = train_metadata.merge(
         folds_df, on=["isic_id", "patient_id"], how="inner"
     )
-    train_metadata = train_metadata.sample(
-        frac=0.05, random_state=args.seed
-    ).reset_index(drop=True)
+    if args.debug:
+        train_metadata = train_metadata.sample(
+            frac=0.05, random_state=args.seed
+        ).reset_index(drop=True)
 
     y_train = train_metadata["target"]
 
