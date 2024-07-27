@@ -1,0 +1,46 @@
+[tool.poetry]
+authors = []
+description = "Finetuning vision models using accelerate on modal."
+name = "isic2024-scd"
+readme = "README.md"
+version = "0.1.0"
+
+[tool.poetry.dependencies]
+python = "==3.10.*"
+kaggle = "^1.6.17"
+tqdm = "^4.66.4"
+pillow = "^10.4.0"
+h5py = "^3.11.0"
+torch = "^2.4.0"
+albumentations = "^1.4.12"
+timm = "^1.0.7"
+accelerate = "^0.33.0"
+pandas = "^2.2.2"
+scikit-learn = "^1.5.1"
+
+[tool.poetry.group.dev]
+optional = true
+
+[tool.poetry.group.dev.dependencies]
+jupyter = "^1.0.0"
+modal = "^0.63.89"
+
+[tool.poetry.group.lint]
+optional = true
+
+[tool.poetry.group.lint.dependencies]
+ruff = "^0.1.15"
+pre-commit = "^3.6.0"
+
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.flake8-annotations]
+mypy-init-return = true
+
+[tool.ruff.pydocstyle]
+convention = "google"
+
+[build-system]
+build-backend = "poetry.core.masonry.api"
+requires = ["poetry-core"]
