@@ -35,11 +35,11 @@ train_script_mount = Mount.from_local_file(
 class Config:
     mixed_precision: bool = "fp16"
     pos_ratio: float = 0.1
-    image_size: int = 128
+    image_size: int = 64
     train_batch_size: int = 256
     val_batch_size: int = 512
     num_workers: int = 4
-    learning_rate: float = 5e-4
+    learning_rate: float = 1e-3
     num_epochs: int = 5
     tta: bool = True
     seed: int = 2022

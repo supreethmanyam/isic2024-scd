@@ -384,7 +384,7 @@ def main(args):
     model = ISICNet(model_name=args.model_name, pretrained=True, infer=False)
     model = model.to(accelerator.device)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate / 10)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate / 5)
     lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
         max_lr=args.learning_rate,
