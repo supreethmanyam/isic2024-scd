@@ -17,14 +17,14 @@ from accelerate.utils import (
     DistributedDataParallelKwargs,
     ProjectConfiguration,
     set_seed,
+    tqdm,
 )
 from albumentations.pytorch import ToTensorV2
 from PIL import Image
 from sklearn.metrics import auc, roc_curve
 from sklearn.metrics import roc_auc_score as compute_auc
 from timm import create_model
-from torch.utils.data import DataLoader, Dataset
-from tqdm import tqdm
+from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
 logger = get_logger(__name__)
 
@@ -190,39 +190,6 @@ def compute_pauc(y_true, y_pred, min_tpr: float = 0.80) -> float:
     return partial_auc
 
 
-def make_over_sample(train_index, target, pos_ratio):
-    target_series = pd.Series(target, index=train_index)
-
-    # Separate positive and negative indices
-    pos_indices = target_series[target_series == 1].index
-    neg_indices = target_series[target_series == 0].index
-
-    # Calculate the number of positive samples needed
-    n_pos = len(pos_indices)
-    n_neg = len(neg_indices)
-    n_total = n_pos + n_neg
-    n_desired_pos = int((pos_ratio * n_total) / (1 - pos_ratio))
-
-    # over_sample positive indices
-    if n_desired_pos > n_pos:
-        pos_indices_oversampled = np.random.choice(
-            pos_indices, size=n_desired_pos, replace=True
-        )
-    else:
-        pos_indices_oversampled = pos_indices
-
-    ned_indices_under_sampled = np.unique(
-        np.random.choice(neg_indices, size=n_desired_pos * 3, replace=True)
-    )
-
-    # Combine with negative indices
-    oversampled_indices = np.concatenate(
-        [ned_indices_under_sampled, pos_indices_oversampled]
-    )
-    np.random.shuffle(oversampled_indices)
-    return oversampled_indices
-
-
 def parse_args(input_args=None):
     parser = argparse.ArgumentParser(description="Train ISIC2024 SCD")
     parser.add_argument(
@@ -274,7 +241,13 @@ def parse_args(input_args=None):
         "--fold", type=int, default=None, required=True, help="Fold number."
     )
     parser.add_argument(
-        "--pos_ratio", type=float, default=0.1, help="Positive ratio for oversampling."
+        "--pos_weight", type=float, default=0.1, help="Positive samples weight."
+    )
+    parser.add_argument(
+        "--neg_strong_weight", type=float, default=0.1, help="Negative strong samples weight."
+    )
+    parser.add_argument(
+        "--neg_weak_weight", type=float, default=0.1, help="Negative weak samples weight."
     )
     parser.add_argument("--image_size", type=int, default=224, help="Image size.")
     parser.add_argument(
@@ -350,12 +323,16 @@ def main(args):
 
     y_train = train_metadata["target"]
 
+    train_metadata.loc[(train_metadata["target"] == 1), "sample_weight"] = args.pos_weight
+    train_metadata.loc[train_metadata["lesion_id"].notnull() & (
+                train_metadata["target"] == 0), "sample_weight"] = args.neg_strong_weight
+    train_metadata.loc[
+        train_metadata["lesion_id"].isnull() & (train_metadata["target"] == 0), "sample_weight"] = args.neg_weak_weight
+
     dev_index = train_metadata[train_metadata["fold"] != args.fold].index
     val_index = train_metadata[train_metadata["fold"] == args.fold].index
 
-    oversampled_dev_index = make_over_sample(dev_index, y_train, args.pos_ratio)
-
-    dev_metadata = train_metadata.loc[oversampled_dev_index, :].reset_index(drop=True)
+    dev_metadata = train_metadata.loc[dev_index, :].reset_index(drop=True)
     val_metadata = train_metadata.loc[val_index, :].reset_index(drop=True)
 
     dev_dataset = ISICDataset(
@@ -365,10 +342,14 @@ def main(args):
         val_metadata, train_images, augment=val_augment(args.image_size)
     )
 
+    weighted_sampler = WeightedRandomSampler(weights=dev_metadata["sample_weight"],
+                                             num_samples=len(dev_dataset),
+                                             replacement=True)
+
     dev_dataloader = DataLoader(
         dev_dataset,
         batch_size=args.train_batch_size,
-        shuffle=True,
+        sampler=weighted_sampler,
         num_workers=args.num_workers,
         pin_memory=True,
     )
@@ -476,13 +457,15 @@ def main(args):
             best_auc = epoch_auc
             best_epoch = epoch
             best_val_preds = val_preds
+            output_dir = f"{args.model_dir}/models/fold_{args.fold}"
+            accelerator.save_state(output_dir)
+            logger.info("Model improved over previous best, saving model")
+        else:
+            logger.info("Model did not improve over previous best")
         logger.info(
             f"Epoch {epoch} - Epoch pauc: {epoch_pauc} | Best auc: {best_auc} | Best pauc: {best_pauc} | Best "
             f"epoch: {best_epoch}"
         )
-
-        output_dir = f"{args.model_dir}/models/fold_{args.fold}/epoch_{epoch}"
-        accelerator.save_state(output_dir)
 
     logger.info(
         f"Fold: {args.fold} | Best pauc: {best_pauc} | Best auc: {best_auc} | Best epoch: {best_epoch}"

@@ -8,7 +8,6 @@ version = "0.1.0"
 [tool.poetry.dependencies]
 python = "==3.10.*"
 kaggle = "^1.6.17"
-tqdm = "^4.66.4"
 pillow = "^10.4.0"
 h5py = "^3.11.0"
 torch = "^2.4.0"
@@ -17,6 +16,7 @@ timm = "^1.0.7"
 accelerate = "^0.33.0"
 pandas = "^2.2.2"
 scikit-learn = "^1.5.1"
+tqdm = "^4.66.4"
 
 [tool.poetry.group.dev]
 optional = true

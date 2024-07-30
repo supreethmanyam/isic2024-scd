@@ -34,13 +34,15 @@ train_script_mount = Mount.from_local_file(
 @dataclass
 class Config:
     mixed_precision: bool = "fp16"
-    pos_ratio: float = 0.1
+    pos_weight = 10
+    neg_strong_weight = 0.6
+    neg_weak_weight = 0.4
     image_size: int = 64
     train_batch_size: int = 256
     val_batch_size: int = 512
     num_workers: int = 4
     learning_rate: float = 1e-3
-    num_epochs: int = 5
+    num_epochs: int = 2
     tta: bool = True
     seed: int = 2022
 
@@ -188,7 +190,9 @@ def train(model_name: str, version: str, fold: int):
             f"--model_dir={model_dir}",
             f"--mixed_precision={config.mixed_precision}",
             f"--fold={fold}",
-            f"--pos_ratio={config.pos_ratio}",
+            f"--pos_weight={config.pos_weight}",
+            f"--neg_strong_weight={config.neg_strong_weight}",
+            f"--neg_weak_weight={config.neg_weak_weight}",
             f"--image_size={config.image_size}",
             f"--train_batch_size={config.train_batch_size}",
             f"--val_batch_size={config.val_batch_size}",
@@ -208,6 +212,7 @@ def train(model_name: str, version: str, fold: int):
     image=image,
     mounts=[train_script_mount],
     volumes={str(ARTIFACTS_DIR): artifacts_volume},
+    timeout=60 * 60,  # 1 hour
 )
 def upload_weights(model_name: str, version: str):
     import json
@@ -292,6 +297,8 @@ def upload_weights(model_name: str, version: str):
         "cv_pauc_oof": cv_pauc_oof,
         "cv_auc_avg": cv_auc_avg,
         "cv_pauc_avg": cv_pauc_avg,
+        "cv_auc_std": cv_auc_std,
+        "cv_pauc_std": cv_pauc_std,
     }
 
     with open(model_dir / f"{model_identifier}_run_metadata.json", "w") as f:
