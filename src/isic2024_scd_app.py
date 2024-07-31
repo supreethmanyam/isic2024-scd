@@ -17,18 +17,23 @@ image = Image.debian_slim(python_version="3.10").poetry_install_from_file(
     only=["main"],
 )
 
-train_script_filename = "train_isic2024_scd.py"
-train_script_local_path = Path(__file__).parent / train_script_filename
-train_script_remote_path = Path(f"/root/{train_script_filename}")
 
-if not train_script_local_path.exists():
-    raise FileNotFoundError(
-        f"{train_script_filename} not found! Place the train script in the same directory"
-    )
+def mount_script(script_filename: str):
+    script_local_path = Path(__file__).parent / script_filename
+    script_remote_path = Path(f"/root/{script_filename}")
 
-train_script_mount = Mount.from_local_file(
-    train_script_local_path, str(train_script_remote_path)
-)
+    if not script_local_path.exists():
+        raise FileNotFoundError(
+            f"{script_filename} not found! Place the script in the same directory"
+        )
+
+    return Mount.from_local_file(script_local_path, str(script_remote_path)), script_filename
+
+
+train_script_mount, train_script_filename = mount_script("train.py")
+dataset_script_mount, _ = mount_script("dataset.py")
+models_script_mount, _ = mount_script("models.py")
+utils_script_mount, _ = mount_script("utils.py")
 
 
 @dataclass
@@ -42,7 +47,7 @@ class Config:
     val_batch_size: int = 512
     num_workers: int = 4
     learning_rate: float = 1e-3
-    num_epochs: int = 2
+    num_epochs: int = 1
     tta: bool = True
     seed: int = 2022
 
@@ -88,7 +93,7 @@ def extract(fzip, dest, desc="Extracting", allowed_extensions: Tuple[str] = None
                     shutil.copyfileobj(CallbackIOWrapper(pbar.update, fi), fo)
 
 
-def download_data(path: Path):
+def download_competition_data(path: Path, recreate: bool = False):
     import subprocess
 
     required_files = [
@@ -100,8 +105,8 @@ def download_data(path: Path):
         "folds.csv",
     ]
     existing_files = set(file.name for file in path.iterdir())
-    if len(existing_files) > 0 and set(required_files) <= existing_files:
-        print("Dataset is loaded ✅")
+    if not recreate and len(existing_files) > 0 and set(required_files) <= existing_files:
+        print("Competition dataset is loaded ✅")
     else:
         # Download competition dataset
         subprocess.run(
@@ -124,17 +129,140 @@ def download_data(path: Path):
 
         subprocess.run(f"tree -L 3 {path}", shell=True, check=True)
         input_volume.commit()
-        print("Downloaded dataset from kaggle ✅")
+        print("Downloaded competition dataset from kaggle ✅")
+
+
+external_data_mapping = {
+    "2020": {
+        "id": 70,
+        "path": INPUT_DIR / "isic-2020-challenge"
+    },
+    "2019": {
+        "id": 65,
+        "path": INPUT_DIR / "isic-2019-challenge"
+    }
+}
+
+
+def center_crop_and_resize(img, resize_to):
+    from PIL import Image as PILImage
+
+    size = min(img.size)
+    offset0 = (img.size[0] - size) // 2
+    offset1 = (img.size[1] - size) // 2
+    cropped_img = img.crop((offset0, offset1, offset0 + size, offset1 + size))
+
+    resized_img = cropped_img.resize((resize_to, resize_to), PILImage.Resampling.LANCZOS)
+    return resized_img
+
+
+def process_file(file):
+    import numpy as np
+    from PIL import Image as PILImage
+
+    extensions = ["jpg", "png", "bmp", "jpeg"]
+    filename = os.path.splitext(os.path.basename(file))[0]
+    ext = os.path.splitext(file)[1][1:].lower()
+    if ext not in extensions:
+        print("%s does not have a supported extension. Skipping!!" % file)
+        return
+    else:
+        tmp = PILImage.open(file)
+        tmp = center_crop_and_resize(tmp, resize_to=256)
+        tmp.save("temp.jpg", "jpeg", quality=100)
+        fin = open("temp.jpg", "rb")
+        binary_data = fin.read()
+        binary_data_np = np.asarray(binary_data)
+        fin.close()
+        return filename, binary_data_np
+
+
+def prepare_external_data(images_dir: Path, data_dir: Path):
+    import h5py
+    from tqdm import tqdm
+    import pandas as pd
+    import os
+    from glob import glob
+
+    direc = str(images_dir)
+    flist = glob(os.path.join(direc, '*'))
+
+    f = h5py.File(data_dir / "train-image.hdf5", 'w')
+    for file in tqdm(flist):
+        result = process_file(file)
+        if result is not None:
+            image_filename, image_data = result
+            f.create_dataset(image_filename, data=image_data)
+    f.close()
+
+    # Read the metadata file
+    metadata = pd.read_csv(images_dir / "metadata.csv", low_memory=False)
+    metadata.to_csv(data_dir / "train-metadata.csv", index=False)
+
+
+def download_external_data(year: str, recreate: bool = False):
+    import subprocess
+
+    path = external_data_mapping[year]["path"]
+    if recreate and path.exists():
+        shutil.rmtree(path)
+
+    path.mkdir(parents=True, exist_ok=True)
+    images_path = path / "images"
+
+    required_files = [
+        "train-image.hdf5",
+        "train-metadata.csv",
+    ]
+    existing_files = set(file.name for file in path.iterdir())
+    if len(existing_files) > 0 and set(required_files) <= existing_files:
+        print(f"External dataset {year} is loaded ✅")
+    else:
+        # Download external dataset
+        print(f"Downloading external dataset {year}...")
+        subprocess.run(
+            f"isic image download -c {external_data_mapping[year]['id']} {images_path}",
+            shell=True,
+            check=True,
+        )
+        prepare_external_data(images_path, path)
+        shutil.rmtree(images_path)
+        input_volume.commit()
+        print(f"Downloaded external dataset {year} from kaggle ✅")
 
 
 @app.function(
     image=image,
-    mounts=[train_script_mount],
+    mounts=[train_script_mount,
+            dataset_script_mount,
+            models_script_mount,
+            utils_script_mount],
+    volumes={str(INPUT_DIR): input_volume},
+    timeout=60 * 60 * 6,  # 6 hours
+)
+def download_data(ext: str = "", recreate: bool = False):
+    setup_kaggle()
+    data_dir = INPUT_DIR / "isic-2024-challenge"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    download_competition_data(data_dir)
+    if "2020" in ext:
+        download_external_data("2020", recreate)
+    if "2019" in ext:
+        download_external_data("2019", recreate)
+    input_volume.commit()
+
+
+@app.function(
+    image=image,
+    mounts=[train_script_mount,
+            dataset_script_mount,
+            models_script_mount,
+            utils_script_mount],
     volumes={str(INPUT_DIR): input_volume, str(ARTIFACTS_DIR): artifacts_volume},
     gpu=GPU_CONFIG,
     timeout=60 * 60 * 5,  # 5 hours
 )
-def train(model_name: str, version: str, fold: int):
+def train(model_name: str, version: str, fold: int, ext: str = ""):
     import subprocess
 
     from accelerate.utils import get_gpu_info, write_basic_config
@@ -158,8 +286,30 @@ def train(model_name: str, version: str, fold: int):
     config = Config()
 
     data_dir = INPUT_DIR / "isic-2024-challenge"
-    data_dir.mkdir(parents=True, exist_ok=True)
-    download_data(data_dir)
+    if "2020" in ext:
+        data_2020_dir = external_data_mapping["2020"]["path"]
+    else:
+        data_2020_dir = ""
+    if "2019" in ext:
+        data_2019_dir = external_data_mapping["2019"]["path"]
+    else:
+        data_2019_dir = ""
+
+    # import h5py
+    # import pandas as pd
+    # import numpy as np
+    # from PIL import Image
+    # from io import BytesIO
+    # images = h5py.File(data_2020_dir / "train-image.hdf5", mode="r")
+    # df = pd.read_csv(data_2020_dir / "train-metadata.csv")
+    #
+    # for each in df["isic_id"]:
+    #     try:
+    #         np.array(Image.open(BytesIO(images[each][()])))
+    #     except Exception as e:
+    #         print(f"Error in {each} with error {e}")
+    # import sys
+    # sys.exit(0)
 
     model_identifier = f"{model_name}_{version}"
     model_dir = Path(ARTIFACTS_DIR) / model_identifier
@@ -190,9 +340,6 @@ def train(model_name: str, version: str, fold: int):
             f"--model_dir={model_dir}",
             f"--mixed_precision={config.mixed_precision}",
             f"--fold={fold}",
-            f"--pos_weight={config.pos_weight}",
-            f"--neg_strong_weight={config.neg_strong_weight}",
-            f"--neg_weak_weight={config.neg_weak_weight}",
             f"--image_size={config.image_size}",
             f"--train_batch_size={config.train_batch_size}",
             f"--val_batch_size={config.val_batch_size}",
@@ -202,6 +349,8 @@ def train(model_name: str, version: str, fold: int):
             f"--seed={config.seed}",
             # "--debug",
         ]
+        + ([f"--data_2020_dir={data_2020_dir}"] if data_2020_dir else [])
+        + ([f"--data_2019_dir={data_2019_dir}"] if data_2019_dir else [])
     )
     print(subprocess.list2cmdline(commands))
     _exec_subprocess(commands)
@@ -210,7 +359,10 @@ def train(model_name: str, version: str, fold: int):
 
 @app.function(
     image=image,
-    mounts=[train_script_mount],
+    mounts=[train_script_mount,
+            dataset_script_mount,
+            models_script_mount,
+            utils_script_mount],
     volumes={str(ARTIFACTS_DIR): artifacts_volume},
     timeout=60 * 60,  # 1 hour
 )
@@ -223,7 +375,7 @@ def upload_weights(model_name: str, version: str):
 
     import numpy as np
     import pandas as pd
-    from train_isic2024_scd import compute_auc, compute_pauc
+    from utils import compute_auc, compute_pauc
 
     setup_kaggle()
 
@@ -336,8 +488,3 @@ def upload_weights(model_name: str, version: str):
             check=True,
         )
     print(f"Weights for {model_identifier} uploaded to Kaggle ✅")
-
-
-@app.local_entrypoint()
-def main(model_name: str, version: str, fold: int):
-    train.remote(model_name=model_name, version=version, fold=fold)
