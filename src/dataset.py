@@ -12,8 +12,58 @@ from albumentations.pytorch import ToTensorV2
 
 
 label_mapping = {
-    "2020": "isic-2020",
-    "2019": "isic-2019",
+    "2024": {
+        "Hidradenoma": "unknown",
+        "Lichen planus like keratosis": "BKL",
+        "Pigmented benign keratosis": "BKL",
+        "Seborrheic keratosis": "BKL",
+        "Solar lentigo": "BKL",
+        "Nevus": "NV",
+        "Angiofibroma": "unknown",
+        "Dermatofibroma": "DF",
+        "Fibroepithelial polyp": "unknown",
+        "Scar": "unknown",
+        "Hemangioma": "unknown",
+        "Trichilemmal or isthmic-catagen or pilar cyst": "unknown",
+        "Lentigo NOS": "BKL",
+        "Verruca": "unknown",
+        "Solar or actinic keratosis": "AKIEC",
+        "Atypical intraepithelial melanocytic proliferation": "unknown",
+        "Atypical melanocytic neoplasm": "unknown",
+        "Basal cell carcinoma": "BCC",
+        "Squamous cell carcinoma in situ": "SCC",
+        "Squamous cell carcinoma, Invasive": "SCC",
+        "Squamous cell carcinoma, NOS": "SCC",
+        "Melanoma in situ": "MEL",
+        "Melanoma Invasive": "MEL",
+        "Melanoma metastasis": "MEL",
+        "Melanoma, NOS": "MEL"
+    },
+    "2020": {
+        "nevus": "NV",
+        "melanoma": "MEL",
+        "seborrheic keratosis": "BKL",
+        "lentigo NOS": "BKL",
+        "lichenoid keratosis": "BKL",
+        "other": "unknown",
+        "solar lentigo": "BKL",
+        "scar": "unknown",
+        "cafe-au-lait macule": "unknown",
+        "atypical melanocytic proliferation": "unknown",
+        "pigmented benign keratosis": "BKL"
+    },
+    "2019": {
+        "nevus": "NV",
+        "melanoma": "MEL",
+        "seborrheic keratosis": "BKL",
+        "pigmented benign keratosis": "BKL",
+        "dermatofibroma": "DF",
+        "squamous cell carcinoma": "SCC",
+        "basal cell carcinoma": "BCC",
+        "vascular lesion": "VASC",
+        "actinic keratosis": "AKIEC",
+        "solar lentigo": "BKL",
+    },
 }
 
 
@@ -76,21 +126,28 @@ class ISICDataset(Dataset):
         return self.length
 
     def __getitem__(self, index):
-        data = self.metadata.iloc[index]
+        row = self.metadata.iloc[index]
 
-        image = np.array(Image.open(BytesIO(self.images[data["isic_id"]][()])))
+        image = np.array(Image.open(BytesIO(self.images[row["isic_id"]][()])))
         image = self.augment(image=image)["image"]
 
-        record = {"image": image}
+        data = image.float().div(255)
 
         if not self.infer:
-            target = data["target"]
-            record["target"] = torch.tensor(target).float()
+            label = torch.tensor(row["label"]).long()
+            return data, label
 
-        return record
+        return data
 
 
-def get_data(data_dir, data_2020_dir, data_2019_dir, debug, seed):
+def get_data(data_dir, data_2020_dir, data_2019_dir, out_dim, debug, seed):
+    all_labels = np.unique(list(label_mapping["2024"].values()) +
+                           list(label_mapping["2020"].values()) +
+                           list(label_mapping["2019"].values()))
+    label2idx = {label: idx for idx, label in enumerate(all_labels)}
+    malignant_labels = ["BCC", "MEL", "SCC"]
+    malignant_idx = [label2idx[label] for label in malignant_labels]
+
     train_metadata = pd.read_csv(
         f"{data_dir}/train-metadata.csv", low_memory=False
     )
@@ -100,13 +157,28 @@ def get_data(data_dir, data_2020_dir, data_2019_dir, debug, seed):
     train_metadata = train_metadata.merge(
         folds_df, on=["isic_id", "patient_id"], how="inner"
     )
+    if out_dim == 2:
+        train_metadata["label"] = train_metadata["target"]
+        train_metadata.loc[(train_metadata["label"] == 1), "sample_weight"] = 10
+        train_metadata.loc[train_metadata["lesion_id"].notnull() & (
+                train_metadata["label"] == 0), "sample_weight"] = 0.6
+        train_metadata.loc[
+            train_metadata["lesion_id"].isnull() & (train_metadata["label"] == 0),
+            "sample_weight"] = 0.4
 
-    train_metadata.loc[(train_metadata["target"] == 1), "sample_weight"] = 10
-    train_metadata.loc[train_metadata["lesion_id"].notnull() & (
-            train_metadata["target"] == 0), "sample_weight"] = 0.6
-    train_metadata.loc[
-        train_metadata["lesion_id"].isnull() & (train_metadata["target"] == 0),
-        "sample_weight"] = 0.4
+    elif out_dim == 9:
+        train_metadata["label"] = train_metadata["iddx_3"].fillna("unknown")
+        train_metadata["label"] = train_metadata["label"].replace(label_mapping["2024"])
+        train_metadata["label"] = train_metadata["label"].map(label2idx)
+        train_metadata["strength"] = np.where(train_metadata["lesion_id"].notnull(), "strong", "weak")
+        train_metadata.loc[train_metadata["label"].isin(malignant_idx), "sample_weight"] = 10
+        train_metadata.loc[~train_metadata["label"].isin(malignant_idx) &
+                           (train_metadata["strength"] == "strong"), "sample_weight"] = 0.6
+        train_metadata.loc[~train_metadata["label"].isin(malignant_idx) &
+                           (train_metadata["strength"] == "weak"), "sample_weight"] = 0.4
+    else:
+        raise ValueError(f"Invalid out_dim: {out_dim}")
+
     if debug:
         train_metadata = train_metadata.sample(
             frac=0.05, random_state=seed
@@ -117,10 +189,26 @@ def get_data(data_dir, data_2020_dir, data_2019_dir, debug, seed):
             f"{data_2020_dir}/train-metadata.csv", low_memory=False
         )
         train_images_2020 = h5py.File(f"{data_2020_dir}/train-image.hdf5", mode="r")
-
-        train_metadata_2020["target"] = train_metadata_2020["benign_malignant"].map({"benign": 0, "malignant": 1})
-        train_metadata_2020.loc[(train_metadata_2020["target"] == 1), "sample_weight"] = 10
-        train_metadata_2020.loc[(train_metadata_2020["target"] == 0), "sample_weight"] = 1
+        train_metadata_2020["label"] = train_metadata_2020["diagnosis"].fillna("unknown")
+        train_metadata_2020['label'] = train_metadata_2020["label"].replace(label_mapping["2020"])
+        train_metadata_2020['label'] = train_metadata_2020['label'].map(label2idx)
+        train_metadata_2020["strength"] = np.where(
+            train_metadata_2020["diagnosis_confirm_type"] == "histopathology", "strong", "weak")
+        if out_dim == 2:
+            train_metadata_2020["label"] = np.where(train_metadata_2020["label"].isin(malignant_labels), 1, 0)
+            train_metadata_2020.loc[(train_metadata_2020["label"] == 1), "sample_weight"] = 10
+            train_metadata_2020.loc[(train_metadata_2020["label"] == 0) &
+                                    (train_metadata_2020["strength"] == "strong"), "sample_weight"] = 0.6
+            train_metadata_2020.loc[(train_metadata_2020["label"] == 0) &
+                                    (train_metadata_2020["strength"] == "weak"), "sample_weight"] = 0.4
+        elif out_dim == 9:
+            train_metadata_2020.loc[train_metadata_2020["label"].isin(malignant_idx), "sample_weight"] = 10
+            train_metadata_2020.loc[~train_metadata_2020["label"].isin(malignant_idx) &
+                                    (train_metadata_2020["strength"] == "strong"), "sample_weight"] = 0.6
+            train_metadata_2020.loc[~train_metadata_2020["label"].isin(malignant_idx) &
+                                    (train_metadata_2020["strength"] == "weak"), "sample_weight"] = 0.4
+        else:
+            raise ValueError(f"Invalid out_dim: {out_dim}")
 
         if debug:
             train_metadata_2020 = train_metadata_2020.sample(
@@ -135,10 +223,25 @@ def get_data(data_dir, data_2020_dir, data_2019_dir, debug, seed):
             f"{data_2019_dir}/train-metadata.csv", low_memory=False
         )
         train_images_2019 = h5py.File(f"{data_2019_dir}/train-image.hdf5", mode="r")
-
-        train_metadata_2019["target"] = train_metadata_2019["benign_malignant"].map({"benign": 0, "malignant": 1})
-        train_metadata_2019.loc[(train_metadata_2019["target"] == 1), "sample_weight"] = 10
-        train_metadata_2019.loc[(train_metadata_2019["target"] == 0), "sample_weight"] = 1
+        train_metadata_2019['label'] = train_metadata_2019["diagnosis"].replace(label_mapping["2019"])
+        train_metadata_2019['label'] = train_metadata_2019['label'].map(label2idx)
+        train_metadata_2019["strength"] = np.where(
+            train_metadata_2019["diagnosis_confirm_type"] == "histopathology", "strong", "weak")
+        if out_dim == 2:
+            train_metadata_2019["label"] = np.where(train_metadata_2019["label"].isin(malignant_labels), 1, 0)
+            train_metadata_2019.loc[(train_metadata_2019["label"] == 1), "sample_weight"] = 10
+            train_metadata_2019.loc[(train_metadata_2019["label"] == 0) &
+                                    (train_metadata_2019["strength"] == "strong"), "sample_weight"] = 0.6
+            train_metadata_2019.loc[(train_metadata_2019["label"] == 0) &
+                                    (train_metadata_2019["strength"] == "weak"), "sample_weight"] = 0.4
+        elif out_dim == 9:
+            train_metadata_2019.loc[train_metadata_2019["label"].isin(malignant_idx), "sample_weight"] = 10
+            train_metadata_2019.loc[~train_metadata_2019["label"].isin(malignant_idx) &
+                                    (train_metadata_2019["strength"] == "strong"), "sample_weight"] = 0.6
+            train_metadata_2019.loc[~train_metadata_2019["label"].isin(malignant_idx) &
+                                    (train_metadata_2019["strength"] == "weak"), "sample_weight"] = 0.4
+        else:
+            raise ValueError(f"Invalid out_dim: {out_dim}")
         if debug:
             train_metadata_2019 = train_metadata_2019.sample(
                 frac=0.05, random_state=seed
@@ -147,4 +250,7 @@ def get_data(data_dir, data_2020_dir, data_2019_dir, debug, seed):
         train_metadata_2019 = pd.DataFrame()
         train_images_2019 = None
 
-    return train_metadata, train_images, train_metadata_2020, train_images_2020, train_metadata_2019, train_images_2019
+    return (train_metadata, train_images,
+            train_metadata_2020, train_images_2020,
+            train_metadata_2019, train_images_2019,
+            malignant_idx)

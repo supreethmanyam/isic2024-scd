@@ -5,7 +5,7 @@ from timm import create_model
 
 
 class ISICNet(nn.Module):
-    def __init__(self, model_name, pretrained=True, infer=False):
+    def __init__(self, model_name, out_dim, pretrained=True, infer=False):
         super(ISICNet, self).__init__()
         self.infer = infer
         self.model = create_model(
@@ -15,14 +15,12 @@ class ISICNet(nn.Module):
             num_classes=0,
             global_pool="",
         )
-        self.classifier = nn.Linear(self.model.num_features, 1)
+        self.classifier = nn.Linear(self.model.num_features, out_dim)
 
-        self.dropouts = nn.ModuleList([nn.Dropout(0.5) for i in range(5)])
+        self.dropouts = nn.ModuleList([nn.Dropout(0.5) for _ in range(5)])
 
-    def forward(self, batch):
-        image = batch["image"]
-        image = image.float() / 255
-
+    def forward(self, data):
+        image = data
         x = self.model(image)
         bs = len(image)
         pool = F.adaptive_avg_pool2d(x, 1).reshape(bs, -1)

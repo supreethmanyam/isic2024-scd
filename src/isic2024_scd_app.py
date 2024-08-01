@@ -39,16 +39,13 @@ utils_script_mount, _ = mount_script("utils.py")
 @dataclass
 class Config:
     mixed_precision: bool = "fp16"
-    pos_weight = 10
-    neg_strong_weight = 0.6
-    neg_weak_weight = 0.4
     image_size: int = 64
     train_batch_size: int = 256
     val_batch_size: int = 512
     num_workers: int = 4
     learning_rate: float = 1e-3
-    num_epochs: int = 1
-    tta: bool = True
+    num_epochs: int = 6
+    n_tta: int = 6
     seed: int = 2022
 
 
@@ -262,7 +259,7 @@ def download_data(ext: str = "", recreate: bool = False):
     gpu=GPU_CONFIG,
     timeout=60 * 60 * 5,  # 5 hours
 )
-def train(model_name: str, version: str, fold: int, ext: str = ""):
+def train(model_name: str, version: str, fold: int, ext: str = "", out_dim: int = 9):
     import subprocess
 
     from accelerate.utils import get_gpu_info, write_basic_config
@@ -295,22 +292,6 @@ def train(model_name: str, version: str, fold: int, ext: str = ""):
     else:
         data_2019_dir = ""
 
-    # import h5py
-    # import pandas as pd
-    # import numpy as np
-    # from PIL import Image
-    # from io import BytesIO
-    # images = h5py.File(data_2020_dir / "train-image.hdf5", mode="r")
-    # df = pd.read_csv(data_2020_dir / "train-metadata.csv")
-    #
-    # for each in df["isic_id"]:
-    #     try:
-    #         np.array(Image.open(BytesIO(images[each][()])))
-    #     except Exception as e:
-    #         print(f"Error in {each} with error {e}")
-    # import sys
-    # sys.exit(0)
-
     model_identifier = f"{model_name}_{version}"
     model_dir = Path(ARTIFACTS_DIR) / model_identifier
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -340,12 +321,13 @@ def train(model_name: str, version: str, fold: int, ext: str = ""):
             f"--model_dir={model_dir}",
             f"--mixed_precision={config.mixed_precision}",
             f"--fold={fold}",
+            f"--out_dim={out_dim}",
             f"--image_size={config.image_size}",
             f"--train_batch_size={config.train_batch_size}",
             f"--val_batch_size={config.val_batch_size}",
             f"--learning_rate={config.learning_rate}",
             f"--num_epochs={config.num_epochs}",
-            "--tta" if config.tta else "",
+            f"--n_tta={config.n_tta}",
             f"--seed={config.seed}",
             # "--debug",
         ]
@@ -413,7 +395,7 @@ def upload_weights(model_name: str, version: str):
         with open(model_dir / f"models/fold_{fold}/metadata.json", "r") as f:
             fold_metadata = json.load(f)
             best_num_epochs[f"fold_{fold}"] = fold_metadata["best_epoch"]
-        assert np.allclose(val_pauc_scores[f"fold_{fold}"], fold_metadata["best_pauc"])
+        assert np.allclose(val_pauc_scores[f"fold_{fold}"], fold_metadata["best_val_pauc"])
     print("Val AUC scores:")
     pprint(val_auc_scores)
     print("Val PAUC scores:")

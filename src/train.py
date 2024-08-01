@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
-import torch.nn.functional as F
+import torch.nn as nn
 from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import (
@@ -79,6 +79,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--fold", type=int, default=None, required=True, help="Fold number."
     )
+    parser.add_argument("--out_dim", type=int, default=9, help="Number of classes.")
     parser.add_argument("--image_size", type=int, default=224, help="Image size.")
     parser.add_argument(
         "--train_batch_size", type=int, default=256, help="Batch size for training."
@@ -98,7 +99,7 @@ def parse_args(input_args=None):
     )
     parser.add_argument("--num_epochs", type=int, default=2, help="Number of epochs.")
     parser.add_argument(
-        "--tta", action="store_true", help="Use test time augmentation."
+        "--n_tta", type=int, default=6, help="Number of test time augmentations."
     )
     parser.add_argument(
         "--seed", type=int, default=None, help="A seed for reproducible training."
@@ -115,16 +116,14 @@ def parse_args(input_args=None):
     return args
 
 
-def train_epoch(epoch, model, optimizer, dev_dataloader, lr_scheduler, accelerator, log_interval=10):
+def train_epoch(epoch, model, optimizer, criterion, dev_dataloader, lr_scheduler, accelerator, log_interval=10):
     model.train()
     train_loss = []
     total_steps = len(dev_dataloader)
-    for step, batch in enumerate(dev_dataloader):
+    for step, (data, target) in enumerate(dev_dataloader):
         optimizer.zero_grad()
-        output = model(batch)
-        loss = F.binary_cross_entropy_with_logits(
-            output, batch["target"].unsqueeze(1)
-        )
+        logits = model(data)
+        loss = criterion(logits, target)
         accelerator.backward(loss)
         optimizer.step()
         lr_scheduler.step()
@@ -140,75 +139,70 @@ def train_epoch(epoch, model, optimizer, dev_dataloader, lr_scheduler, accelerat
     return train_loss
 
 
-# def get_trans(img, iteration):
-#     if iteration >= 4:
-#         img = img.transpose(2, 3)
-#     if iteration % 4 == 0:
-#         return img
-#     elif iteration % 4 == 1:
-#         return img.flip(2)
-#     elif iteration % 4 == 2:
-#         return img.flip(3)
-#     elif iteration % 4 == 3:
-#         return img.flip(2).flip(3)
+def get_trans(img, iteration):
+    if iteration >= 6:
+        img = img.transpose(2, 3)
+    if iteration % 6 == 0:
+        return img
+    elif iteration % 6 == 1:
+        return torch.flip(img, dims=[2])
+    elif iteration % 6 == 2:
+        return torch.flip(img, dims=[3])
+    elif iteration % 6 == 3:
+        return torch.rot90(img, 1, dims=[2, 3])
+    elif iteration % 6 == 4:
+        return torch.rot90(img, 2, dims=[2, 3])
+    elif iteration % 6 == 5:
+        return torch.rot90(img, 3, dims=[2, 3])
 
 
-def val_epoch(epoch, model, val_dataloader, accelerator, tta, log_interval=10):
+def val_epoch(epoch, model, criterion, val_dataloader, accelerator, out_dim, n_tta, malignant_idx, log_interval=50):
     model.eval()
-    val_preds = []
+    val_probs = []
     val_targets = []
+    val_loss = []
     total_steps = len(val_dataloader)
     with torch.no_grad():
-        for step, batch in enumerate(val_dataloader):
-            image0 = batch["image"].clone().detach()
-            val_preds_batch = 0
-            counter = 0
-            with torch.no_grad():
-                outputs = model(batch)
-            preds = torch.sigmoid(outputs)
-            val_targets_batch = batch["target"]
-            preds, val_targets_batch = accelerator.gather_for_metrics(
-                (preds, val_targets_batch)
-            )
-            val_preds_batch += preds.data.cpu().numpy().reshape(-1)
-            counter += 1
-            if tta:
-                batch["image"] = torch.flip(image0, dims=[2])
-                with torch.no_grad():
-                    outputs = model(batch)
-                preds = torch.sigmoid(outputs)
-                preds = accelerator.gather_for_metrics(preds)
-                val_preds_batch += preds.data.cpu().numpy().reshape(-1)
-                counter += 1
+        for step, (data, target) in enumerate(val_dataloader):
+            logits = torch.zeros((data.shape[0], out_dim)).to(accelerator.device)
+            probs = torch.zeros((data.shape[0], out_dim)).to(accelerator.device)
+            for idx in range(n_tta):
+                logits_iter = model(get_trans(data, idx))
+                logits += logits_iter
+                probs += logits_iter.softmax(1)
+            logits /= n_tta
+            probs /= n_tta
 
-                batch["image"] = torch.flip(image0, dims=[3])
-                with torch.no_grad():
-                    outputs = model(batch)
-                preds = torch.sigmoid(outputs)
-                preds = accelerator.gather_for_metrics(preds)
-                val_preds_batch += preds.data.cpu().numpy().reshape(-1)
-                counter += 1
+            loss = criterion(logits, target)
+            val_loss.append(loss.detach().cpu().numpy())
 
-                for k in [1, 2, 3]:
-                    batch["image"] = torch.rot90(image0, k, dims=[2, 3])
-                    with torch.no_grad():
-                        outputs = model(batch)
-                    preds = torch.sigmoid(outputs)
-                    preds = accelerator.gather_for_metrics(preds)
-                    val_preds_batch += preds.data.cpu().numpy().reshape(-1)
-                    counter += 1
-            val_preds_batch = val_preds_batch / counter
-            val_preds.append(val_preds_batch)
-            val_targets.append(val_targets_batch.data.cpu().numpy().reshape(-1))
+            logits, probs, targets = accelerator.gather((logits, probs, target))
+            val_probs.append(probs)
+            val_targets.append(targets)
 
             if step % log_interval == 0:
                 logger.info(
                     f"Epoch: {epoch} | Step: {step}/{total_steps}"
                 )
 
-    val_preds = np.concatenate(val_preds)
-    val_targets = np.concatenate(val_targets)
-    return val_preds, val_targets
+    val_loss = np.mean(val_loss)
+    val_probs = torch.cat(val_probs).cpu().numpy()
+    val_targets = torch.cat(val_targets).cpu().numpy()
+    if out_dim == 9:
+        binary_probs = val_probs[:, malignant_idx].sum(1)
+        binary_targets = ((val_targets == malignant_idx[0]) |
+                          (val_targets == malignant_idx[1]) |
+                          (val_targets == malignant_idx[2]))
+
+        val_auc = compute_auc(binary_targets, binary_probs)
+        val_pauc = compute_pauc(binary_targets, binary_probs, min_tpr=0.8)
+    else:
+        binary_probs = val_probs[:, 1]
+        binary_targets = val_targets
+
+        val_auc = compute_auc(binary_targets, binary_probs)
+        val_pauc = compute_pauc(binary_targets, binary_probs, min_tpr=0.8)
+    return val_loss, val_auc, val_pauc, val_probs, val_targets, binary_probs, binary_targets
 
 
 def main(args):
@@ -235,8 +229,9 @@ def main(args):
 
     (train_metadata, train_images,
      train_metadata_2020, train_images_2020,
-     train_metadata_2019, train_images_2019) = get_data(
-        args.data_dir, args.data_2020_dir, args.data_2019_dir, args.debug, args.seed
+     train_metadata_2019, train_images_2019,
+     malignant_idx) = get_data(
+        args.data_dir, args.data_2020_dir, args.data_2019_dir, args.out_dim, args.debug, args.seed
     )
 
     dev_index = train_metadata[train_metadata["fold"] != args.fold].index
@@ -245,6 +240,8 @@ def main(args):
     dev_metadata = train_metadata.loc[dev_index, :].reset_index(drop=True)
     val_metadata = train_metadata.loc[val_index, :].reset_index(drop=True)
 
+    if "sample_weight" not in dev_metadata.columns:
+        dev_metadata["sample_weight"] = 1
     sample_weight = dev_metadata["sample_weight"].values.tolist()
 
     dev_dataset = ISICDataset(
@@ -256,6 +253,8 @@ def main(args):
 
     if not train_metadata_2020.empty:
         logger.info("Using 2020 data")
+        if "sample_weight" not in train_metadata_2020.columns:
+            train_metadata_2020["sample_weight"] = 1
         sample_weight += train_metadata_2020["sample_weight"].values.tolist()
         train_dataset_2020 = ISICDataset(
             train_metadata_2020, train_images_2020, augment=dev_augment(args.image_size)
@@ -263,13 +262,18 @@ def main(args):
         dev_dataset = torch.utils.data.ConcatDataset([dev_dataset, train_dataset_2020])
     if not train_metadata_2019.empty:
         logger.info("Using 2019 data")
+        if "sample_weight" not in train_metadata_2019.columns:
+            train_metadata_2019["sample_weight"] = 1
         sample_weight += train_metadata_2019["sample_weight"].values.tolist()
         train_dataset_2019 = ISICDataset(
             train_metadata_2019, train_images_2019, augment=dev_augment(args.image_size)
         )
         dev_dataset = torch.utils.data.ConcatDataset([dev_dataset, train_dataset_2019])
 
+    if np.unique(sample_weight).size > 1:
+        logger.info("Using Weighted sampler")
     sampler = WeightedRandomSampler(sample_weight, len(sample_weight), replacement=True)
+    logger.info(f"Building a model with {args.out_dim} classes")
 
     dev_dataloader = DataLoader(
         dev_dataset,
@@ -287,10 +291,10 @@ def main(args):
         pin_memory=True,
     )
 
-    model = ISICNet(model_name=args.model_name, pretrained=True, infer=False)
+    model = ISICNet(model_name=args.model_name, out_dim=args.out_dim, pretrained=True, infer=False)
     model = model.to(accelerator.device)
-
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate / 5)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate / 20)
     lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
         max_lr=args.learning_rate,
@@ -308,36 +312,38 @@ def main(args):
         model, optimizer, dev_dataloader, val_dataloader, lr_scheduler
     )
 
-    best_pauc = 0
-    best_auc = 0
+    best_val_auc = 0
+    best_val_pauc = 0
+    best_val_loss = 0
     best_epoch = 0
-    best_val_preds = None
+    best_val_probs = None
 
     for epoch in range(1, args.num_epochs + 1):
         logger.info(f"Fold {args.fold} | Epoch {epoch}")
         start_time = time.time()
 
         train_loss = train_epoch(
-            epoch, model, optimizer, dev_dataloader, lr_scheduler, accelerator
+            epoch, model, optimizer, criterion, dev_dataloader, lr_scheduler, accelerator
         )
-        val_preds, val_targets = val_epoch(epoch, model, val_dataloader, accelerator, args.tta)
+        val_loss, val_auc, val_pauc, val_probs, val_targets, binary_probs, binary_targets = val_epoch(
+            epoch, model, criterion, val_dataloader, accelerator, args.out_dim, args.n_tta, malignant_idx
+        )
 
-        epoch_auc = compute_auc(val_targets, val_preds)
-        epoch_pauc = compute_pauc(val_targets, val_preds, min_tpr=0.8)
-
-        if epoch_pauc > best_pauc:
-            logger.info(f"pAUC: {best_auc:.5f} --> {epoch_pauc:.5f}, saving model...")
-            best_pauc = epoch_pauc
-            best_auc = epoch_auc
+        if val_pauc > best_val_pauc:
+            logger.info(f"pAUC: {best_val_pauc:.5f} --> {val_pauc:.5f}, saving model...")
+            best_val_pauc = val_pauc
+            best_val_auc = val_auc
+            best_val_loss = val_loss
             best_epoch = epoch
-            best_val_preds = val_preds
+            best_val_probs = binary_probs
             output_dir = f"{args.model_dir}/models/fold_{args.fold}"
             accelerator.save_state(output_dir)
         else:
-            logger.info(f"pAUC: {best_auc:.5f} --> {epoch_pauc:.5f}, skipping model save...")
+            logger.info(f"pAUC: {best_val_pauc:.5f} --> {val_pauc:.5f}, skipping model save...")
         logger.info(
-            f"Fold: {args.fold} | Epoch: {epoch} | Train loss: {train_loss:.5f} |"
-            f" AUC: {epoch_auc:.5f} | pAUC: {epoch_pauc:.5f}"
+            f"Fold: {args.fold} | Epoch: {epoch} |"
+            f" Train loss: {train_loss:.5f} | Val loss: {val_loss:.5f}"
+            f" Val AUC: {val_auc:.5f} | Val pAUC: {val_pauc:.5f}"
         )
         elapsed_time = time.time() - start_time
         elapsed_mins = int(elapsed_time // 60)
@@ -345,15 +351,19 @@ def main(args):
         logger.info(f"Epoch {epoch} took {elapsed_mins}m {elapsed_secs}s")
 
     logger.info(
-        f"Fold: {args.fold} | Best pauc: {best_pauc} | Best auc: {best_auc} | Best epoch: {best_epoch}"
+        f"Fold: {args.fold} | "
+        f"Best Val pAUC: {best_val_pauc} | Best AUC: {best_val_auc} |"
+        f" Best loss: {best_val_loss} |"
+        f" Best epoch: {best_epoch}"
     )
     oof_df = pd.DataFrame(
         {
             "isic_id": val_metadata["isic_id"],
             "patient_id": val_metadata["patient_id"],
             "fold": args.fold,
+            "label": val_metadata["label"],
             "target": val_metadata["target"],
-            f"oof_{args.model_identifier}": best_val_preds,
+            f"oof_{args.model_identifier}": best_val_probs,
         }
     )
     oof_df.to_csv(
@@ -364,8 +374,9 @@ def main(args):
     fold_metadata = {
         "fold": args.fold,
         "best_epoch": best_epoch,
-        "best_auc": best_auc,
-        "best_pauc": best_pauc,
+        "best_val_auc": best_val_auc,
+        "best_val_pauc": best_val_pauc,
+        "best_val_loss": float(best_val_loss)
     }
     with open(f"{args.model_dir}/models/fold_{args.fold}/metadata.json", "w") as f:
         json.dump(fold_metadata, f)
