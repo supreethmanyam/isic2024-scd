@@ -1,7 +1,5 @@
 import numpy as np
-
-from sklearn.metrics import auc, roc_curve
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import auc, roc_auc_score, roc_curve
 
 
 def compute_auc(y_true, y_pred) -> float:

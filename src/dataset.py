@@ -1,15 +1,13 @@
 from io import BytesIO
-from PIL import Image
-import numpy as np
-import pandas as pd
-import h5py
-
-import torch
-from torch.utils.data import Dataset
 
 import albumentations as A
+import h5py
+import numpy as np
+import pandas as pd
+import torch
 from albumentations.pytorch import ToTensorV2
-
+from PIL import Image
+from torch.utils.data import Dataset
 
 label_mapping = {
     "2024": {
@@ -37,7 +35,7 @@ label_mapping = {
         "Melanoma in situ": "MEL",
         "Melanoma Invasive": "MEL",
         "Melanoma metastasis": "MEL",
-        "Melanoma, NOS": "MEL"
+        "Melanoma, NOS": "MEL",
     },
     "2020": {
         "nevus": "NV",
@@ -50,7 +48,7 @@ label_mapping = {
         "scar": "unknown",
         "cafe-au-lait macule": "unknown",
         "atypical melanocytic proliferation": "unknown",
-        "pigmented benign keratosis": "BKL"
+        "pigmented benign keratosis": "BKL",
     },
     "2019": {
         "nevus": "NV",
@@ -141,16 +139,16 @@ class ISICDataset(Dataset):
 
 
 def get_data(data_dir, data_2020_dir, data_2019_dir, out_dim, debug, seed):
-    all_labels = np.unique(list(label_mapping["2024"].values()) +
-                           list(label_mapping["2020"].values()) +
-                           list(label_mapping["2019"].values()))
+    all_labels = np.unique(
+        list(label_mapping["2024"].values())
+        + list(label_mapping["2020"].values())
+        + list(label_mapping["2019"].values())
+    )
     label2idx = {label: idx for idx, label in enumerate(all_labels)}
     malignant_labels = ["BCC", "MEL", "SCC"]
     malignant_idx = [label2idx[label] for label in malignant_labels]
 
-    train_metadata = pd.read_csv(
-        f"{data_dir}/train-metadata.csv", low_memory=False
-    )
+    train_metadata = pd.read_csv(f"{data_dir}/train-metadata.csv", low_memory=False)
     train_images = h5py.File(f"{data_dir}/train-image.hdf5", mode="r")
 
     folds_df = pd.read_csv(f"{data_dir}/folds.csv")
@@ -160,22 +158,35 @@ def get_data(data_dir, data_2020_dir, data_2019_dir, out_dim, debug, seed):
     if out_dim == 2:
         train_metadata["label"] = train_metadata["target"]
         train_metadata.loc[(train_metadata["label"] == 1), "sample_weight"] = 10
-        train_metadata.loc[train_metadata["lesion_id"].notnull() & (
-                train_metadata["label"] == 0), "sample_weight"] = 0.6
+        train_metadata.loc[
+            train_metadata["lesion_id"].notnull() & (train_metadata["label"] == 0),
+            "sample_weight",
+        ] = 0.6
         train_metadata.loc[
             train_metadata["lesion_id"].isnull() & (train_metadata["label"] == 0),
-            "sample_weight"] = 0.4
+            "sample_weight",
+        ] = 0.4
 
     elif out_dim == 9:
         train_metadata["label"] = train_metadata["iddx_3"].fillna("unknown")
         train_metadata["label"] = train_metadata["label"].replace(label_mapping["2024"])
         train_metadata["label"] = train_metadata["label"].map(label2idx)
-        train_metadata["strength"] = np.where(train_metadata["lesion_id"].notnull(), "strong", "weak")
-        train_metadata.loc[train_metadata["label"].isin(malignant_idx), "sample_weight"] = 10
-        train_metadata.loc[~train_metadata["label"].isin(malignant_idx) &
-                           (train_metadata["strength"] == "strong"), "sample_weight"] = 0.6
-        train_metadata.loc[~train_metadata["label"].isin(malignant_idx) &
-                           (train_metadata["strength"] == "weak"), "sample_weight"] = 0.4
+        train_metadata["strength"] = np.where(
+            train_metadata["lesion_id"].notnull(), "strong", "weak"
+        )
+        train_metadata.loc[
+            train_metadata["label"].isin(malignant_idx), "sample_weight"
+        ] = 10
+        train_metadata.loc[
+            ~train_metadata["label"].isin(malignant_idx)
+            & (train_metadata["strength"] == "strong"),
+            "sample_weight",
+        ] = 0.6
+        train_metadata.loc[
+            ~train_metadata["label"].isin(malignant_idx)
+            & (train_metadata["strength"] == "weak"),
+            "sample_weight",
+        ] = 0.4
     else:
         raise ValueError(f"Invalid out_dim: {out_dim}")
 
@@ -189,24 +200,49 @@ def get_data(data_dir, data_2020_dir, data_2019_dir, out_dim, debug, seed):
             f"{data_2020_dir}/train-metadata.csv", low_memory=False
         )
         train_images_2020 = h5py.File(f"{data_2020_dir}/train-image.hdf5", mode="r")
-        train_metadata_2020["label"] = train_metadata_2020["diagnosis"].fillna("unknown")
-        train_metadata_2020['label'] = train_metadata_2020["label"].replace(label_mapping["2020"])
-        train_metadata_2020['label'] = train_metadata_2020['label'].map(label2idx)
+        train_metadata_2020["label"] = train_metadata_2020["diagnosis"].fillna(
+            "unknown"
+        )
+        train_metadata_2020["label"] = train_metadata_2020["label"].replace(
+            label_mapping["2020"]
+        )
+        train_metadata_2020["label"] = train_metadata_2020["label"].map(label2idx)
         train_metadata_2020["strength"] = np.where(
-            train_metadata_2020["diagnosis_confirm_type"] == "histopathology", "strong", "weak")
+            train_metadata_2020["diagnosis_confirm_type"] == "histopathology",
+            "strong",
+            "weak",
+        )
         if out_dim == 2:
-            train_metadata_2020["label"] = np.where(train_metadata_2020["label"].isin(malignant_labels), 1, 0)
-            train_metadata_2020.loc[(train_metadata_2020["label"] == 1), "sample_weight"] = 10
-            train_metadata_2020.loc[(train_metadata_2020["label"] == 0) &
-                                    (train_metadata_2020["strength"] == "strong"), "sample_weight"] = 0.6
-            train_metadata_2020.loc[(train_metadata_2020["label"] == 0) &
-                                    (train_metadata_2020["strength"] == "weak"), "sample_weight"] = 0.4
+            train_metadata_2020["label"] = np.where(
+                train_metadata_2020["label"].isin(malignant_labels), 1, 0
+            )
+            train_metadata_2020.loc[
+                (train_metadata_2020["label"] == 1), "sample_weight"
+            ] = 10
+            train_metadata_2020.loc[
+                (train_metadata_2020["label"] == 0)
+                & (train_metadata_2020["strength"] == "strong"),
+                "sample_weight",
+            ] = 0.6
+            train_metadata_2020.loc[
+                (train_metadata_2020["label"] == 0)
+                & (train_metadata_2020["strength"] == "weak"),
+                "sample_weight",
+            ] = 0.4
         elif out_dim == 9:
-            train_metadata_2020.loc[train_metadata_2020["label"].isin(malignant_idx), "sample_weight"] = 10
-            train_metadata_2020.loc[~train_metadata_2020["label"].isin(malignant_idx) &
-                                    (train_metadata_2020["strength"] == "strong"), "sample_weight"] = 0.6
-            train_metadata_2020.loc[~train_metadata_2020["label"].isin(malignant_idx) &
-                                    (train_metadata_2020["strength"] == "weak"), "sample_weight"] = 0.4
+            train_metadata_2020.loc[
+                train_metadata_2020["label"].isin(malignant_idx), "sample_weight"
+            ] = 10
+            train_metadata_2020.loc[
+                ~train_metadata_2020["label"].isin(malignant_idx)
+                & (train_metadata_2020["strength"] == "strong"),
+                "sample_weight",
+            ] = 0.6
+            train_metadata_2020.loc[
+                ~train_metadata_2020["label"].isin(malignant_idx)
+                & (train_metadata_2020["strength"] == "weak"),
+                "sample_weight",
+            ] = 0.4
         else:
             raise ValueError(f"Invalid out_dim: {out_dim}")
 
@@ -223,23 +259,46 @@ def get_data(data_dir, data_2020_dir, data_2019_dir, out_dim, debug, seed):
             f"{data_2019_dir}/train-metadata.csv", low_memory=False
         )
         train_images_2019 = h5py.File(f"{data_2019_dir}/train-image.hdf5", mode="r")
-        train_metadata_2019['label'] = train_metadata_2019["diagnosis"].replace(label_mapping["2019"])
-        train_metadata_2019['label'] = train_metadata_2019['label'].map(label2idx)
+        train_metadata_2019["label"] = train_metadata_2019["diagnosis"].replace(
+            label_mapping["2019"]
+        )
+        train_metadata_2019["label"] = train_metadata_2019["label"].map(label2idx)
         train_metadata_2019["strength"] = np.where(
-            train_metadata_2019["diagnosis_confirm_type"] == "histopathology", "strong", "weak")
+            train_metadata_2019["diagnosis_confirm_type"] == "histopathology",
+            "strong",
+            "weak",
+        )
         if out_dim == 2:
-            train_metadata_2019["label"] = np.where(train_metadata_2019["label"].isin(malignant_labels), 1, 0)
-            train_metadata_2019.loc[(train_metadata_2019["label"] == 1), "sample_weight"] = 10
-            train_metadata_2019.loc[(train_metadata_2019["label"] == 0) &
-                                    (train_metadata_2019["strength"] == "strong"), "sample_weight"] = 0.6
-            train_metadata_2019.loc[(train_metadata_2019["label"] == 0) &
-                                    (train_metadata_2019["strength"] == "weak"), "sample_weight"] = 0.4
+            train_metadata_2019["label"] = np.where(
+                train_metadata_2019["label"].isin(malignant_labels), 1, 0
+            )
+            train_metadata_2019.loc[
+                (train_metadata_2019["label"] == 1), "sample_weight"
+            ] = 10
+            train_metadata_2019.loc[
+                (train_metadata_2019["label"] == 0)
+                & (train_metadata_2019["strength"] == "strong"),
+                "sample_weight",
+            ] = 0.6
+            train_metadata_2019.loc[
+                (train_metadata_2019["label"] == 0)
+                & (train_metadata_2019["strength"] == "weak"),
+                "sample_weight",
+            ] = 0.4
         elif out_dim == 9:
-            train_metadata_2019.loc[train_metadata_2019["label"].isin(malignant_idx), "sample_weight"] = 10
-            train_metadata_2019.loc[~train_metadata_2019["label"].isin(malignant_idx) &
-                                    (train_metadata_2019["strength"] == "strong"), "sample_weight"] = 0.6
-            train_metadata_2019.loc[~train_metadata_2019["label"].isin(malignant_idx) &
-                                    (train_metadata_2019["strength"] == "weak"), "sample_weight"] = 0.4
+            train_metadata_2019.loc[
+                train_metadata_2019["label"].isin(malignant_idx), "sample_weight"
+            ] = 10
+            train_metadata_2019.loc[
+                ~train_metadata_2019["label"].isin(malignant_idx)
+                & (train_metadata_2019["strength"] == "strong"),
+                "sample_weight",
+            ] = 0.6
+            train_metadata_2019.loc[
+                ~train_metadata_2019["label"].isin(malignant_idx)
+                & (train_metadata_2019["strength"] == "weak"),
+                "sample_weight",
+            ] = 0.4
         else:
             raise ValueError(f"Invalid out_dim: {out_dim}")
         if debug:
@@ -250,7 +309,12 @@ def get_data(data_dir, data_2020_dir, data_2019_dir, out_dim, debug, seed):
         train_metadata_2019 = pd.DataFrame()
         train_images_2019 = None
 
-    return (train_metadata, train_images,
-            train_metadata_2020, train_images_2020,
-            train_metadata_2019, train_images_2019,
-            malignant_idx)
+    return (
+        train_metadata,
+        train_images,
+        train_metadata_2020,
+        train_images_2020,
+        train_metadata_2019,
+        train_images_2019,
+        malignant_idx,
+    )

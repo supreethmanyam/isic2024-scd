@@ -27,7 +27,9 @@ def mount_script(script_filename: str):
             f"{script_filename} not found! Place the script in the same directory"
         )
 
-    return Mount.from_local_file(script_local_path, str(script_remote_path)), script_filename
+    return Mount.from_local_file(
+        script_local_path, str(script_remote_path)
+    ), script_filename
 
 
 train_script_mount, train_script_filename = mount_script("train.py")
@@ -39,13 +41,13 @@ utils_script_mount, _ = mount_script("utils.py")
 @dataclass
 class Config:
     mixed_precision: bool = "fp16"
-    image_size: int = 64
-    train_batch_size: int = 256
+    image_size: int = 128
+    train_batch_size: int = 64
     val_batch_size: int = 512
     num_workers: int = 4
     learning_rate: float = 1e-3
     num_epochs: int = 6
-    n_tta: int = 6
+    n_tta: int = 10
     seed: int = 2022
 
 
@@ -102,7 +104,11 @@ def download_competition_data(path: Path, recreate: bool = False):
         "folds.csv",
     ]
     existing_files = set(file.name for file in path.iterdir())
-    if not recreate and len(existing_files) > 0 and set(required_files) <= existing_files:
+    if (
+        not recreate
+        and len(existing_files) > 0
+        and set(required_files) <= existing_files
+    ):
         print("Competition dataset is loaded ✅")
     else:
         # Download competition dataset
@@ -130,14 +136,8 @@ def download_competition_data(path: Path, recreate: bool = False):
 
 
 external_data_mapping = {
-    "2020": {
-        "id": 70,
-        "path": INPUT_DIR / "isic-2020-challenge"
-    },
-    "2019": {
-        "id": 65,
-        "path": INPUT_DIR / "isic-2019-challenge"
-    }
+    "2020": {"id": 70, "path": INPUT_DIR / "isic-2020-challenge"},
+    "2019": {"id": 65, "path": INPUT_DIR / "isic-2019-challenge"},
 }
 
 
@@ -149,7 +149,9 @@ def center_crop_and_resize(img, resize_to):
     offset1 = (img.size[1] - size) // 2
     cropped_img = img.crop((offset0, offset1, offset0 + size, offset1 + size))
 
-    resized_img = cropped_img.resize((resize_to, resize_to), PILImage.Resampling.LANCZOS)
+    resized_img = cropped_img.resize(
+        (resize_to, resize_to), PILImage.Resampling.LANCZOS
+    )
     return resized_img
 
 
@@ -175,16 +177,17 @@ def process_file(file):
 
 
 def prepare_external_data(images_dir: Path, data_dir: Path):
-    import h5py
-    from tqdm import tqdm
-    import pandas as pd
     import os
     from glob import glob
 
-    direc = str(images_dir)
-    flist = glob(os.path.join(direc, '*'))
+    import h5py
+    import pandas as pd
+    from tqdm import tqdm
 
-    f = h5py.File(data_dir / "train-image.hdf5", 'w')
+    direc = str(images_dir)
+    flist = glob(os.path.join(direc, "*"))
+
+    f = h5py.File(data_dir / "train-image.hdf5", "w")
     for file in tqdm(flist):
         result = process_file(file)
         if result is not None:
@@ -230,10 +233,12 @@ def download_external_data(year: str, recreate: bool = False):
 
 @app.function(
     image=image,
-    mounts=[train_script_mount,
-            dataset_script_mount,
-            models_script_mount,
-            utils_script_mount],
+    mounts=[
+        train_script_mount,
+        dataset_script_mount,
+        models_script_mount,
+        utils_script_mount,
+    ],
     volumes={str(INPUT_DIR): input_volume},
     timeout=60 * 60 * 6,  # 6 hours
 )
@@ -251,10 +256,65 @@ def download_data(ext: str = "", recreate: bool = False):
 
 @app.function(
     image=image,
-    mounts=[train_script_mount,
-            dataset_script_mount,
-            models_script_mount,
-            utils_script_mount],
+    mounts=[
+        train_script_mount,
+        dataset_script_mount,
+        models_script_mount,
+        utils_script_mount,
+    ],
+    volumes={str(INPUT_DIR): input_volume},
+    timeout=60 * 60,  # 1 hour
+)
+def upload_external_data(year: str):
+    import json
+    import subprocess
+    from io import BytesIO
+
+    import pandas as pd
+
+    setup_kaggle()
+    data_dir = external_data_mapping[year]["path"]
+    subprocess.run(f"kaggle datasets init -p {data_dir}", shell=True, check=True)
+    with open(data_dir / "dataset-metadata.json", "r") as f:
+        metadata = json.load(f)
+        title_part = f"ISIC_{year}_CHALLENGE"
+        metadata["title"] = f"{title_part}"
+        metadata["id"] = f"supreethmanyam/{metadata['title'].lower().replace('_', '-')}"
+    with open(data_dir / "dataset-metadata.json", "w") as f:
+        json.dump(metadata, f)
+
+    search_results = subprocess.run(
+        f"kaggle datasets list -m -v -s {metadata['title']}",
+        shell=True,
+        check=True,
+        capture_output=True,
+    )
+    search_results_df = pd.read_csv(BytesIO(search_results.stdout))
+    if search_results_df.empty:
+        print("Creating new dataset...")
+        subprocess.run(
+            f"kaggle datasets create -p {data_dir} --dir-mode tar",
+            shell=True,
+            check=True,
+        )
+    else:
+        print("Updating existing dataset...")
+        subprocess.run(
+            f"kaggle datasets version -p {data_dir} --dir-mode tar",
+            shell=True,
+            check=True,
+        )
+    print(f"External data for {year} uploaded to Kaggle ✅")
+
+
+@app.function(
+    image=image,
+    mounts=[
+        train_script_mount,
+        dataset_script_mount,
+        models_script_mount,
+        utils_script_mount,
+    ],
     volumes={str(INPUT_DIR): input_volume, str(ARTIFACTS_DIR): artifacts_volume},
     gpu=GPU_CONFIG,
     timeout=60 * 60 * 5,  # 5 hours
@@ -281,6 +341,7 @@ def train(model_name: str, version: str, fold: int, ext: str = "", out_dim: int 
 
     setup_kaggle()
     config = Config()
+    config.out_dim = out_dim
 
     data_dir = INPUT_DIR / "isic-2024-challenge"
     if "2020" in ext:
@@ -341,10 +402,12 @@ def train(model_name: str, version: str, fold: int, ext: str = "", out_dim: int 
 
 @app.function(
     image=image,
-    mounts=[train_script_mount,
-            dataset_script_mount,
-            models_script_mount,
-            utils_script_mount],
+    mounts=[
+        train_script_mount,
+        dataset_script_mount,
+        models_script_mount,
+        utils_script_mount,
+    ],
     volumes={str(ARTIFACTS_DIR): artifacts_volume},
     timeout=60 * 60,  # 1 hour
 )
@@ -395,7 +458,9 @@ def upload_weights(model_name: str, version: str):
         with open(model_dir / f"models/fold_{fold}/metadata.json", "r") as f:
             fold_metadata = json.load(f)
             best_num_epochs[f"fold_{fold}"] = fold_metadata["best_epoch"]
-        assert np.allclose(val_pauc_scores[f"fold_{fold}"], fold_metadata["best_val_pauc"])
+        assert np.allclose(
+            val_pauc_scores[f"fold_{fold}"], fold_metadata["best_val_pauc"]
+        )
     print("Val AUC scores:")
     pprint(val_auc_scores)
     print("Val PAUC scores:")
