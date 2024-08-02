@@ -41,13 +41,13 @@ utils_script_mount, _ = mount_script("utils.py")
 @dataclass
 class Config:
     mixed_precision: bool = "fp16"
-    image_size: int = 128
-    train_batch_size: int = 64
+    image_size: int = 64
+    train_batch_size: int = 256
     val_batch_size: int = 512
     num_workers: int = 4
     learning_rate: float = 1e-3
     num_epochs: int = 6
-    n_tta: int = 10
+    n_tta: int = 6
     seed: int = 2022
 
 
@@ -341,7 +341,6 @@ def train(model_name: str, version: str, fold: int, ext: str = "", out_dim: int 
 
     setup_kaggle()
     config = Config()
-    config.out_dim = out_dim
 
     data_dir = INPUT_DIR / "isic-2024-challenge"
     if "2020" in ext:
@@ -411,7 +410,7 @@ def train(model_name: str, version: str, fold: int, ext: str = "", out_dim: int 
     volumes={str(ARTIFACTS_DIR): artifacts_volume},
     timeout=60 * 60,  # 1 hour
 )
-def upload_weights(model_name: str, version: str):
+def upload_weights(model_name: str, version: str, out_dim: int):
     import json
     import subprocess
     from glob import glob
@@ -487,6 +486,7 @@ def upload_weights(model_name: str, version: str):
     print(f"CV PAUC STD: {cv_pauc_std}")
 
     config = Config()
+    config.out_dim = out_dim
     metadata = {
         "params": config.__dict__,
         "best_num_epochs": best_num_epochs,
