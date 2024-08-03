@@ -2,6 +2,7 @@ import argparse
 import json
 import logging
 import time
+import joblib
 from pathlib import Path
 
 import numpy as np
@@ -15,7 +16,7 @@ from accelerate.utils import (
     ProjectConfiguration,
     set_seed,
 )
-from dataset import ISICDataset, dev_augment, get_data, val_augment
+from dataset import ISICDataset, dev_augment, get_data, val_augment, fit_encoder_and_transform
 from models import ISICNet
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from utils import compute_auc, compute_pauc
@@ -87,6 +88,8 @@ def parse_args(input_args=None):
     )
     parser.add_argument("--out_dim", type=int, default=9, help="Number of classes.")
     parser.add_argument("--image_size", type=int, default=224, help="Image size.")
+    parser.add_argument("--use_meta", action="store_true", default=False)
+    parser.add_argument("--n_meta_dim", type=str, default="512,128")
     parser.add_argument(
         "--train_batch_size", type=int, default=256, help="Batch size for training."
     )
@@ -133,6 +136,7 @@ def train_epoch(
     dev_dataloader,
     lr_scheduler,
     accelerator,
+    use_meta,
     log_interval=50,
 ):
     model.train()
@@ -140,7 +144,12 @@ def train_epoch(
     total_steps = len(dev_dataloader)
     for step, (data, target) in enumerate(dev_dataloader):
         optimizer.zero_grad()
-        logits = model(data)
+        if use_meta:
+            image, meta = data
+            logits = model(image, meta)
+        else:
+            image = data
+            logits = model(image)
         loss = criterion(logits, target)
         accelerator.backward(loss)
         optimizer.step()
@@ -184,6 +193,7 @@ def val_epoch(
     out_dim,
     n_tta,
     malignant_idx,
+    use_meta,
     log_interval=50,
 ):
     model.eval()
@@ -193,12 +203,22 @@ def val_epoch(
     total_steps = len(val_dataloader)
     with torch.no_grad():
         for step, (data, target) in enumerate(val_dataloader):
-            logits = torch.zeros((data.shape[0], out_dim)).to(accelerator.device)
-            probs = torch.zeros((data.shape[0], out_dim)).to(accelerator.device)
-            for idx in range(n_tta):
-                logits_iter = model(get_trans(data, idx))
-                logits += logits_iter
-                probs += logits_iter.softmax(1)
+            if use_meta:
+                image, meta = data
+                logits = torch.zeros((image.shape[0], out_dim)).to(accelerator.device)
+                probs = torch.zeros((image.shape[0], out_dim)).to(accelerator.device)
+                for idx in range(n_tta):
+                    logits_iter = model(get_trans(image, idx), meta)
+                    logits += logits_iter
+                    probs += logits_iter.softmax(1)
+            else:
+                image = data
+                logits = torch.zeros((image.shape[0], out_dim)).to(accelerator.device)
+                probs = torch.zeros((image.shape[0], out_dim)).to(accelerator.device)
+                for idx in range(n_tta):
+                    logits_iter = model(get_trans(image, idx))
+                    logits += logits_iter
+                    probs += logits_iter.softmax(1)
             logits /= n_tta
             probs /= n_tta
 
@@ -281,6 +301,24 @@ def main(args):
         args.seed,
     )
 
+    if args.use_meta:
+        logger.info("Using meta features")
+        (
+            encoder,
+            feature_cols,
+            train_features,
+            train_2020_features,
+            train_2019_features
+        ) = fit_encoder_and_transform(train_metadata, train_metadata_2020, train_metadata_2019)
+        train_metadata = pd.concat([train_metadata, train_features], axis=1)
+        train_metadata_2020 = pd.concat([train_metadata_2020, train_2020_features], axis=1)
+        train_metadata_2019 = pd.concat([train_metadata_2019, train_2019_features], axis=1)
+
+        with open(f"{args.model_dir}/encoder.joblib", "wb") as f:
+            joblib.dump(encoder, f)
+    else:
+        feature_cols = None
+
     dev_index = train_metadata[train_metadata["fold"] != args.fold].index
     val_index = train_metadata[train_metadata["fold"] == args.fold].index
 
@@ -292,10 +330,10 @@ def main(args):
     sample_weight = dev_metadata["sample_weight"].values.tolist()
 
     dev_dataset = ISICDataset(
-        dev_metadata, train_images, augment=dev_augment(args.image_size)
+        dev_metadata, train_images, feature_cols=feature_cols, augment=dev_augment(args.image_size)
     )
     val_dataset = ISICDataset(
-        val_metadata, train_images, augment=val_augment(args.image_size)
+        val_metadata, train_images, feature_cols=feature_cols, augment=val_augment(args.image_size)
     )
 
     if not train_metadata_2020.empty:
@@ -304,7 +342,7 @@ def main(args):
             train_metadata_2020["sample_weight"] = 1
         sample_weight += train_metadata_2020["sample_weight"].values.tolist()
         train_dataset_2020 = ISICDataset(
-            train_metadata_2020, train_images_2020, augment=dev_augment(args.image_size)
+            train_metadata_2020, train_images_2020, feature_cols=feature_cols, augment=dev_augment(args.image_size)
         )
         dev_dataset = torch.utils.data.ConcatDataset([dev_dataset, train_dataset_2020])
     if not train_metadata_2019.empty:
@@ -313,7 +351,7 @@ def main(args):
             train_metadata_2019["sample_weight"] = 1
         sample_weight += train_metadata_2019["sample_weight"].values.tolist()
         train_dataset_2019 = ISICDataset(
-            train_metadata_2019, train_images_2019, augment=dev_augment(args.image_size)
+            train_metadata_2019, train_images_2019, feature_cols=feature_cols, augment=dev_augment(args.image_size)
         )
         dev_dataset = torch.utils.data.ConcatDataset([dev_dataset, train_dataset_2019])
 
@@ -339,7 +377,11 @@ def main(args):
     )
 
     model = ISICNet(
-        model_name=args.model_name, out_dim=args.out_dim, pretrained=True, infer=False
+        model_name=args.model_name,
+        out_dim=args.out_dim,
+        n_features=len(feature_cols) if feature_cols is not None else 0,
+        n_meta_dim=(int(n) for n in args.n_meta_dim.split(",")),
+        pretrained=True, infer=False
     )
     model = model.to(accelerator.device)
     criterion = nn.CrossEntropyLoss()
@@ -379,6 +421,7 @@ def main(args):
             dev_dataloader,
             lr_scheduler,
             accelerator,
+            args.use_meta,
         )
         (
             val_loss,
@@ -397,6 +440,7 @@ def main(args):
             args.out_dim,
             args.n_tta,
             malignant_idx,
+            args.use_meta,
         )
 
         if val_pauc > best_val_pauc:

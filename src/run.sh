@@ -1,18 +1,24 @@
-modal run -d isic2024_scd_app.py::train --model-name resnet18 --version v4 --fold 1 --ext "2020,2019" --out-dim 2
-https://modal.com/supreeth-manyam/main/apps/ap-lFSWj3NSwxvFFRM1D3F6z1
-modal run -d isic2024_scd_app.py::train --model-name resnet18 --version v4 --fold 2 --ext "2020,2019" --out-dim 2
-https://modal.com/supreeth-manyam/main/apps/ap-w3DhNCKXOLQCZHd91Y3FVR
-modal run -d isic2024_scd_app.py::train --model-name resnet18 --version v4 --fold 3 --ext "2020,2019" --out-dim 2
-https://modal.com/supreeth-manyam/main/apps/ap-aWmDl0QtyV6f9ArYzg8L39
-modal run -d isic2024_scd_app.py::train --model-name resnet18 --version v4 --fold 4 --ext "2020,2019" --out-dim 2
-https://modal.com/supreeth-manyam/main/apps/ap-aEn8uh2zOtqZ9XW790AqO5
-modal run -d isic2024_scd_app.py::train --model-name resnet18 --version v4 --fold 5 --ext "2020,2019" --out-dim 2
-https://modal.com/supreeth-manyam/main/apps/ap-rc840aV3gljiTQMgug0qQS
-modal run -d isic2024_scd_app.py::upload_weights --model-name resnet18 --version v4 --out-dim 2
+modal run -d isic2024_scd_app.py::train --model-name efficientnet_b3 --version v1 --fold 1 --ext "2020,2019" --out-dim 9 --use-meta
+https://modal.com/supreeth-manyam/main/apps/ap-Q854jCNVgWIARaXnUv9zYE
+modal run -d isic2024_scd_app.py::train --model-name efficientnet_b3 --version v1 --fold 2 --ext "2020,2019" --out-dim 9 --use-meta
+https://modal.com/supreeth-manyam/main/apps/ap-wGUsKspJRcDPXyZ9YBQsNL
+modal run -d isic2024_scd_app.py::train --model-name efficientnet_b3 --version v1 --fold 3 --ext "2020,2019" --out-dim 9 --use-meta
+https://modal.com/supreeth-manyam/main/apps/ap-j4vPq2sQQIu52Q4rFS3ijN
+modal run -d isic2024_scd_app.py::train --model-name efficientnet_b3 --version v1 --fold 4 --ext "2020,2019" --out-dim 9 --use-meta
+https://modal.com/supreeth-manyam/main/apps/ap-QLCD5IpQ1XG6Xws45nILxV
+modal run -d isic2024_scd_app.py::train --model-name efficientnet_b3 --version v1 --fold 5 --ext "2020,2019" --out-dim 9 --use-meta
+https://modal.com/supreeth-manyam/main/apps/ap-Kycti8h6Juj1iAZZ2lIiEN
+modal run -d isic2024_scd_app.py::upload_weights --model-name efficientnet_b3 --version v1 --out-dim 9
 
-modal run -d isic2024_scd_app.py::train --model-name resnet18 --version v5 --fold 1 --ext "2020,2019" --out-dim 9
-modal run -d isic2024_scd_app.py::train --model-name resnet18 --version v5 --fold 2 --ext "2020,2019" --out-dim 9
-modal run -d isic2024_scd_app.py::train --model-name resnet18 --version v5 --fold 3 --ext "2020,2019" --out-dim 9
-modal run -d isic2024_scd_app.py::train --model-name resnet18 --version v5 --fold 4 --ext "2020,2019" --out-dim 9
-modal run -d isic2024_scd_app.py::train --model-name resnet18 --version v5 --fold 5 --ext "2020,2019" --out-dim 9
-modal run -d isic2024_scd_app.py::upload_weights --model-name resnet18 --version v5 --out-dim 9
+
+# Resnet18 6 epochs without meta with external data 9 classes
+# Fold1
+https://modal.com/supreeth-manyam/main/apps/ap-s2UhnmT0Ww9aficOfXdppL
+# Fold2
+https://modal.com/supreeth-manyam/main/apps/ap-2G7QbUkO0pgKz8FD9HqufR
+# Fold3
+https://modal.com/supreeth-manyam/main/apps/ap-RXFYcO4aVeOBGvLUNDRLCi
+# Fold4
+https://modal.com/supreeth-manyam/main/apps/ap-EAW0os0NWNh9awXZKc7q5f
+# Fold5
+https://modal.com/supreeth-manyam/main/apps/ap-0yb8sYxrfhjGNt4ZZMkDBj

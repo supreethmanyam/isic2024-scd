@@ -42,12 +42,13 @@ utils_script_mount, _ = mount_script("utils.py")
 class Config:
     mixed_precision: bool = "fp16"
     image_size: int = 64
+    n_meta_dim: str = "512,128"
     train_batch_size: int = 256
     val_batch_size: int = 512
     num_workers: int = 4
     learning_rate: float = 1e-3
-    num_epochs: int = 6
-    n_tta: int = 6
+    num_epochs: int = 10
+    n_tta: int = 10
     seed: int = 2022
 
 
@@ -319,7 +320,7 @@ def upload_external_data(year: str):
     gpu=GPU_CONFIG,
     timeout=60 * 60 * 5,  # 5 hours
 )
-def train(model_name: str, version: str, fold: int, ext: str = "", out_dim: int = 9):
+def train(model_name: str, version: str, fold: int, ext: str = "", out_dim: int = 9, use_meta: bool = True):
     import subprocess
 
     from accelerate.utils import get_gpu_info, write_basic_config
@@ -393,6 +394,7 @@ def train(model_name: str, version: str, fold: int, ext: str = "", out_dim: int 
         ]
         + ([f"--data_2020_dir={data_2020_dir}"] if data_2020_dir else [])
         + ([f"--data_2019_dir={data_2019_dir}"] if data_2019_dir else [])
+        + (["--use_meta", f"--n_meta_dim={config.n_meta_dim}"] if use_meta else [])
     )
     print(subprocess.list2cmdline(commands))
     _exec_subprocess(commands)
