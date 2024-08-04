@@ -42,11 +42,8 @@ class ISICNet(nn.Module):
             meta = self.meta(meta)
             pool = torch.cat((pool, meta), dim=1)
 
-        if self.training:
-            logit = 0
-            for i in range(len(self.dropouts)):
-                logit += self.classifier(self.dropouts[i](pool))
-            logit = logit / len(self.dropouts)
-        else:
-            logit = self.classifier(pool)
+        logit = 0
+        for i in range(len(self.dropouts)):
+            logit += self.classifier(self.dropouts[i](pool))
+        logit = logit / len(self.dropouts)
         return logit

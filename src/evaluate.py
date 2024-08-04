@@ -18,14 +18,14 @@ from accelerate.utils import (
 )
 from dataset import ISICDataset, dev_augment, get_data, val_augment, fit_encoder_and_transform
 from models import ISICNet
-from torch.utils.data import DataLoader, RandomSampler
+from torch.utils.data import DataLoader, WeightedRandomSampler
 from utils import compute_auc, compute_pauc
 
 logger = get_logger(__name__)
 
 
 def parse_args(input_args=None):
-    parser = argparse.ArgumentParser(description="Train ISIC2024 SCD")
+    parser = argparse.ArgumentParser(description="Evaluate ISIC2024 SCD")
     parser.add_argument(
         "--model_identifier",
         type=str,
@@ -46,18 +46,6 @@ def parse_args(input_args=None):
         default=None,
         required=True,
         help="The directory where the data is stored.",
-    )
-    parser.add_argument(
-        "--data_2020_dir",
-        type=str,
-        default=None,
-        help="The directory where the 2020 data is stored.",
-    )
-    parser.add_argument(
-        "--data_2019_dir",
-        type=str,
-        default=None,
-        help="The directory where the 2019 data is stored.",
     )
     parser.add_argument(
         "--model_dir",
@@ -86,13 +74,13 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--fold", type=int, default=None, required=True, help="Fold number."
     )
+    parser.add_argument(
+        "--epoch", type=int, default=None, required=True, help="Epoch number"
+    )
     parser.add_argument("--out_dim", type=int, default=9, help="Number of classes.")
     parser.add_argument("--image_size", type=int, default=224, help="Image size.")
     parser.add_argument("--use_meta", action="store_true", default=False)
     parser.add_argument("--n_meta_dim", type=str, default="512,128")
-    parser.add_argument(
-        "--train_batch_size", type=int, default=256, help="Batch size for training."
-    )
     parser.add_argument(
         "--val_batch_size", type=int, default=512, help="Batch size for validation."
     )
@@ -100,24 +88,10 @@ def parse_args(input_args=None):
         "--num_workers", type=int, default=4, help="Number of workers for dataloader."
     )
     parser.add_argument(
-        "--learning_rate",
-        type=float,
-        default=None,
-        required=True,
-        help="Learning rate.",
-    )
-    parser.add_argument("--num_epochs", type=int, default=2, help="Number of epochs.")
-    parser.add_argument(
         "--n_tta", type=int, default=6, help="Number of test time augmentations."
     )
     parser.add_argument(
         "--seed", type=int, default=None, help="A seed for reproducible training."
-    )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        default=False,
-        help="Use a small subset of the data for debugging.",
     )
 
     if input_args is not None:
@@ -126,47 +100,6 @@ def parse_args(input_args=None):
         args = parser.parse_args()
 
     return args
-
-
-def train_epoch(
-    epoch,
-    model,
-    optimizer,
-    criterion,
-    dev_dataloader,
-    lr_scheduler,
-    accelerator,
-    use_meta,
-    log_interval=50,
-):
-    model.train()
-    train_loss = []
-    total_steps = len(dev_dataloader)
-    lr = lr_scheduler.get_last_lr()[0]
-    logger.info(f"Epoch: {epoch} | LR: {lr}")
-    for step, (data, target) in enumerate(dev_dataloader):
-        optimizer.zero_grad()
-        if use_meta:
-            image, meta = data
-            logits = model(image, meta)
-        else:
-            image = data
-            logits = model(image)
-        loss = criterion(logits, target)
-        accelerator.backward(loss)
-        optimizer.step()
-        lr_scheduler.step()
-
-        loss_value = accelerator.gather(loss).item()
-        train_loss.append(loss_value)
-        smooth_loss = sum(train_loss[-100:]) / min(len(train_loss), 100)
-        if (step == 0) or ((step + 1) % log_interval == 0):
-            logger.info(
-                f"Epoch: {epoch} | Step: {step + 1}/{total_steps} |"
-                f" Loss: {loss_value:.5f} | Smooth loss: {smooth_loss:.5f}"
-            )
-    train_loss = np.mean(train_loss)
-    return train_loss
 
 
 def get_trans(img, iteration):
@@ -231,7 +164,7 @@ def val_epoch(
             val_probs.append(probs)
             val_targets.append(targets)
 
-            if (step == 0) or ((step + 1) % log_interval == 0):
+            if step % log_interval == 0:
                 logger.info(f"Epoch: {epoch} | Step: {step + 1}/{total_steps}")
 
     val_loss = np.mean(val_loss)
@@ -289,17 +222,17 @@ def main(args):
     (
         train_metadata,
         train_images,
-        train_metadata_2020,
-        train_images_2020,
-        train_metadata_2019,
-        train_images_2019,
+        _,
+        _,
+        _,
+        _,
         malignant_idx,
     ) = get_data(
         args.data_dir,
-        args.data_2020_dir,
-        args.data_2019_dir,
+        None,
+        None,
         args.out_dim,
-        args.debug,
+        False,
         args.seed,
     )
 
@@ -311,53 +244,18 @@ def main(args):
             train_features,
             train_2020_features,
             train_2019_features
-        ) = fit_encoder_and_transform(train_metadata, train_metadata_2020, train_metadata_2019)
+        ) = fit_encoder_and_transform(train_metadata, pd.DataFrame(), pd.DataFrame())
         train_metadata = pd.concat([train_metadata, train_features], axis=1)
-        if not train_metadata_2020.empty:
-            train_metadata_2020 = pd.concat([train_metadata_2020, train_2020_features], axis=1)
-        if not train_metadata_2019.empty:
-            train_metadata_2019 = pd.concat([train_metadata_2019, train_2019_features], axis=1)
 
         with open(f"{args.model_dir}/encoder.joblib", "wb") as f:
             joblib.dump(encoder, f)
     else:
         feature_cols = None
 
-    dev_index = train_metadata[train_metadata["fold"] != args.fold].index
     val_index = train_metadata[train_metadata["fold"] == args.fold].index
-
-    dev_metadata = train_metadata.loc[dev_index, :].reset_index(drop=True)
     val_metadata = train_metadata.loc[val_index, :].reset_index(drop=True)
-
-    dev_dataset = ISICDataset(
-        dev_metadata, train_images, feature_cols=feature_cols, augment=dev_augment(args.image_size)
-    )
     val_dataset = ISICDataset(
         val_metadata, train_images, feature_cols=feature_cols, augment=val_augment(args.image_size)
-    )
-
-    if not train_metadata_2020.empty:
-        logger.info("Using 2020 data")
-        train_dataset_2020 = ISICDataset(
-            train_metadata_2020, train_images_2020, feature_cols=feature_cols, augment=dev_augment(args.image_size)
-        )
-        dev_dataset = torch.utils.data.ConcatDataset([dev_dataset, train_dataset_2020])
-    if not train_metadata_2019.empty:
-        logger.info("Using 2019 data")
-        train_dataset_2019 = ISICDataset(
-            train_metadata_2019, train_images_2019, feature_cols=feature_cols, augment=dev_augment(args.image_size)
-        )
-        dev_dataset = torch.utils.data.ConcatDataset([dev_dataset, train_dataset_2019])
-
-    sampler = RandomSampler(dev_dataset)
-    logger.info(f"Building a model with {args.out_dim} classes")
-
-    dev_dataloader = DataLoader(
-        dev_dataset,
-        batch_size=args.train_batch_size,
-        sampler=sampler,
-        num_workers=args.num_workers,
-        pin_memory=True,
     )
     val_dataloader = DataLoader(
         val_dataset,
@@ -377,95 +275,36 @@ def main(args):
     )
     model = model.to(accelerator.device)
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate / 20)
-    lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        optimizer,
-        max_lr=args.learning_rate,
-        epochs=args.num_epochs,
-        steps_per_epoch=len(dev_dataloader),
-    )
+    model, val_dataloader = accelerator.prepare(model, val_dataloader)
+
+    output_dir = f"{args.model_dir}/models/fold_{args.fold}"
+    accelerator.load_state(output_dir)
 
     (
+        val_loss,
+        val_auc,
+        val_pauc,
+        val_probs,
+        val_targets,
+        binary_probs,
+        binary_targets,
+    ) = val_epoch(
+        args.epoch,
         model,
-        optimizer,
-        dev_dataloader,
+        criterion,
         val_dataloader,
-        lr_scheduler,
-    ) = accelerator.prepare(
-        model, optimizer, dev_dataloader, val_dataloader, lr_scheduler
+        accelerator,
+        args.out_dim,
+        args.n_tta,
+        malignant_idx,
+        args.use_meta,
     )
-
-    best_val_auc = 0
-    best_val_pauc = 0
-    best_val_loss = 0
-    best_epoch = 0
-    best_val_probs = None
-
-    for epoch in range(1, args.num_epochs + 1):
-        logger.info(f"Fold {args.fold} | Epoch {epoch}")
-        start_time = time.time()
-
-        train_loss = train_epoch(
-            epoch,
-            model,
-            optimizer,
-            criterion,
-            dev_dataloader,
-            lr_scheduler,
-            accelerator,
-            args.use_meta,
-        )
-        (
-            val_loss,
-            val_auc,
-            val_pauc,
-            val_probs,
-            val_targets,
-            binary_probs,
-            binary_targets,
-        ) = val_epoch(
-            epoch,
-            model,
-            criterion,
-            val_dataloader,
-            accelerator,
-            args.out_dim,
-            args.n_tta,
-            malignant_idx,
-            args.use_meta,
-        )
-
-        if val_pauc > best_val_pauc:
-            logger.info(
-                f"pAUC: {best_val_pauc:.5f} --> {val_pauc:.5f}, saving model..."
-            )
-            best_val_pauc = val_pauc
-            best_val_auc = val_auc
-            best_val_loss = val_loss
-            best_epoch = epoch
-            best_val_probs = binary_probs
-            output_dir = f"{args.model_dir}/models/fold_{args.fold}"
-            accelerator.save_state(output_dir)
-        else:
-            logger.info(
-                f"pAUC: {best_val_pauc:.5f} --> {val_pauc:.5f}, skipping model save..."
-            )
-        logger.info(
-            f"Fold: {args.fold} | Epoch: {epoch} |"
-            f" Train loss: {train_loss:.5f} | Val loss: {val_loss:.5f}"
-            f" Val AUC: {val_auc:.5f} | Val pAUC: {val_pauc:.5f}"
-        )
-        elapsed_time = time.time() - start_time
-        elapsed_mins = int(elapsed_time // 60)
-        elapsed_secs = int(elapsed_time % 60)
-        logger.info(f"Epoch {epoch} took {elapsed_mins}m {elapsed_secs}s")
-
     logger.info(
-        f"Fold: {args.fold} | "
-        f"Best Val pAUC: {best_val_pauc} | Best AUC: {best_val_auc} |"
-        f" Best loss: {best_val_loss} |"
-        f" Best epoch: {best_epoch}"
+        f"Fold: {args.fold} | Epoch: {args.epoch} |"
+        f" Val loss: {val_loss:.5f}"
+        f" Val AUC: {val_auc:.5f} | Val pAUC: {val_pauc:.5f}"
     )
+
     oof_df = pd.DataFrame(
         {
             "isic_id": val_metadata["isic_id"],
@@ -473,7 +312,7 @@ def main(args):
             "fold": args.fold,
             "label": val_metadata["label"],
             "target": val_metadata["target"],
-            f"oof_{args.model_identifier}": best_val_probs,
+            f"oof_{args.model_identifier}": binary_probs,
         }
     )
     oof_df.to_csv(
@@ -483,14 +322,14 @@ def main(args):
 
     fold_metadata = {
         "fold": args.fold,
-        "best_epoch": best_epoch,
-        "best_val_auc": best_val_auc,
-        "best_val_pauc": best_val_pauc,
-        "best_val_loss": float(best_val_loss),
+        "best_epoch": args.epoch,
+        "best_val_auc": val_auc,
+        "best_val_pauc": val_pauc,
+        "best_val_loss": float(val_loss),
     }
     with open(f"{args.model_dir}/models/fold_{args.fold}/metadata.json", "w") as f:
         json.dump(fold_metadata, f)
-    logger.info(f"Finished training fold {args.fold}")
+    logger.info(f"Finished evaluating fold {args.fold}")
 
 
 if __name__ == "__main__":
