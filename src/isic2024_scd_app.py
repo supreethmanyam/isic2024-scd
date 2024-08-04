@@ -305,9 +305,9 @@ class Config:
     n_tta: int = 10
     seed: int = 2022
 
-    ext: str = "2020,2019,2018"
+    ext: str = "2020,2019"
     out_dim: int = 9
-    use_meta: bool = True
+    use_meta: bool = False
     debug: bool = False
 
 

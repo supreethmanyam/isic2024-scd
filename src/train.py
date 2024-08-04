@@ -447,7 +447,7 @@ def main(args):
         infer=False,
     )
     model = model.to(accelerator.device)
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.05)
+    criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.init_lr)
     lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
@@ -477,7 +477,7 @@ def main(args):
     for epoch in range(1, args.num_epochs + 1):
         logger.info(f"Fold {args.fold} | Epoch {epoch}")
         start_time = time.time()
-
+        lr = optimizer.param_groups[0]["lr"]
         train_loss = train_epoch(
             epoch,
             model,
@@ -507,7 +507,6 @@ def main(args):
             malignant_idx,
             args.use_meta,
         )
-        lr = optimizer.param_groups[0]["lr"]
         logger.info(
             f"Fold: {args.fold} | Epoch: {epoch} | LR: {lr:.7f} |"
             f" Train loss: {train_loss:.5f} | Val loss: {val_loss:.5f}"
