@@ -4,11 +4,11 @@ import albumentations as A
 import h5py
 import numpy as np
 import pandas as pd
-from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import OrdinalEncoder, OneHotEncoder
 import torch
 from albumentations.pytorch import ToTensorV2
 from PIL import Image
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder
 from torch.utils.data import Dataset
 
 label_mapping = {
@@ -64,6 +64,16 @@ label_mapping = {
         "actinic keratosis": "AKIEC",
         "solar lentigo": "BKL",
     },
+    "2018": {
+        "nevus": "NV",
+        "melanoma": "MEL",
+        "pigmented benign keratosis": "BKL",
+        "basal cell carcinoma": "BCC",
+        "squamous cell carcinoma": "SCC",
+        "vascular lesion": "VASC",
+        "actinic keratosis": "AKIEC",
+        "dermatofibroma": "DF",
+    },
 }
 
 
@@ -101,7 +111,14 @@ def dev_augment(image_size):
                 shift_limit=0.1, scale_limit=0.1, rotate_limit=15, border_mode=0, p=0.85
             ),
             A.Resize(image_size, image_size),
-            # A.Cutout(max_h_size=int(image_size * 0.375), max_w_size=int(image_size * 0.375), num_holes=1, p=0.7),
+            A.CoarseDropout(
+                max_height=int(image_size * 0.375),
+                max_width=int(image_size * 0.375),
+                max_holes=1,
+                min_holes=1,
+                p=0.7,
+            ),
+            A.Normalize(),
             ToTensorV2(),
         ],
         p=1.0,
@@ -110,7 +127,9 @@ def dev_augment(image_size):
 
 
 def val_augment(image_size):
-    transform = A.Compose([A.Resize(image_size, image_size), ToTensorV2()], p=1.0)
+    transform = A.Compose(
+        [A.Resize(image_size, image_size), A.Normalize(), ToTensorV2()], p=1.0
+    )
     return transform
 
 
@@ -130,18 +149,22 @@ class ISICDataset(Dataset):
         row = self.metadata.iloc[index]
 
         image = np.array(Image.open(BytesIO(self.images[row["isic_id"]][()])))
-        image = self.augment(image=image)["image"]
+        if self.augment is not None:
+            image = self.augment(image=image)["image"]
 
         if self.feature_cols is not None:
-            data = (image.float().div(255), torch.tensor(row[self.feature_cols].values.tolist()).float())
+            data = (
+                image.float(),
+                torch.tensor(row[self.feature_cols].values.tolist()).float(),
+            )
         else:
-            data = image.float().div(255)
+            data = image.float()
 
-        if not self.infer:
+        if self.infer:
+            return data
+        else:
             label = torch.tensor(row["label"]).long()
             return data, label
-
-        return data
 
 
 def feature_engineering(metadata):
@@ -161,7 +184,7 @@ def feature_engineering(metadata):
     return metadata
 
 
-def fit_encoder_and_transform(train, train_2020, train_2019):
+def fit_encoder_and_transform(train, train_2020, train_2019, train_2018):
     numerical_features = ["sex", "age_approx", "num_images"]
     ohe_categorical_features = ["anatom_site_general"]
     mixed_encoded_preprocessor = ColumnTransformer(
@@ -170,8 +193,8 @@ def fit_encoder_and_transform(train, train_2020, train_2019):
             (
                 "ohe_categorical",
                 OneHotEncoder(sparse_output=False, handle_unknown="ignore"),
-                ohe_categorical_features
-            )
+                ohe_categorical_features,
+            ),
         ],
         verbose_feature_names_out=False,
     )
@@ -185,20 +208,33 @@ def fit_encoder_and_transform(train, train_2020, train_2019):
         train_2020_features = mixed_encoded_preprocessor.transform(train_2020)
         train_2020_features.columns = feature_cols
     else:
-        train_2020_features = None
+        train_2020_features = pd.DataFrame()
     if not train_2019.empty:
         train_2019_features = mixed_encoded_preprocessor.transform(train_2019)
         train_2019_features.columns = feature_cols
     else:
-        train_2019_features = None
-    return mixed_encoded_preprocessor, feature_cols, train_features, train_2020_features, train_2019_features
+        train_2019_features = pd.DataFrame()
+    if not train_2018.empty:
+        train_2018_features = mixed_encoded_preprocessor.transform(train_2018)
+        train_2018_features.columns = feature_cols
+    else:
+        train_2018_features = pd.DataFrame()
+    return (
+        mixed_encoded_preprocessor,
+        feature_cols,
+        train_features,
+        train_2020_features,
+        train_2019_features,
+        train_2018_features,
+    )
 
 
-def get_data(data_dir, data_2020_dir, data_2019_dir, out_dim, debug, seed):
+def get_data(data_dir, data_2020_dir, data_2019_dir, data_2018_dir, out_dim):
     all_labels = np.unique(
         list(label_mapping["2024"].values())
         + list(label_mapping["2020"].values())
         + list(label_mapping["2019"].values())
+        + list(label_mapping["2018"].values())
     )
     label2idx = {label: idx for idx, label in enumerate(all_labels)}
     malignant_labels = ["BCC", "MEL", "SCC"]
@@ -222,11 +258,6 @@ def get_data(data_dir, data_2020_dir, data_2019_dir, out_dim, debug, seed):
     else:
         raise ValueError(f"Invalid out_dim: {out_dim}")
 
-    if debug:
-        train_metadata = train_metadata.sample(
-            frac=0.05, random_state=seed
-        ).reset_index(drop=True)
-
     if data_2020_dir is not None:
         train_metadata_2020 = pd.read_csv(
             f"{data_2020_dir}/train-metadata.csv", low_memory=False
@@ -247,11 +278,6 @@ def get_data(data_dir, data_2020_dir, data_2019_dir, out_dim, debug, seed):
             train_metadata_2020["label"] = train_metadata_2020["label"].map(label2idx)
         else:
             raise ValueError(f"Invalid out_dim: {out_dim}")
-
-        if debug:
-            train_metadata_2020 = train_metadata_2020.sample(
-                frac=0.05, random_state=seed
-            ).reset_index(drop=True)
     else:
         train_metadata_2020 = pd.DataFrame()
         train_images_2020 = None
@@ -273,13 +299,31 @@ def get_data(data_dir, data_2020_dir, data_2019_dir, out_dim, debug, seed):
             train_metadata_2019["label"] = train_metadata_2019["label"].map(label2idx)
         else:
             raise ValueError(f"Invalid out_dim: {out_dim}")
-        if debug:
-            train_metadata_2019 = train_metadata_2019.sample(
-                frac=0.05, random_state=seed
-            ).reset_index(drop=True)
     else:
         train_metadata_2019 = pd.DataFrame()
         train_images_2019 = None
+
+    if data_2018_dir is not None:
+        train_metadata_2018 = pd.read_csv(
+            f"{data_2018_dir}/train-metadata.csv", low_memory=False
+        )
+        train_images_2018 = h5py.File(f"{data_2018_dir}/train-image.hdf5", mode="r")
+        train_metadata_2018["patient_id"] = "unknown"
+        train_metadata_2018["label"] = train_metadata_2018["diagnosis"].replace(
+            label_mapping["2018"]
+        )
+        train_metadata_2018 = feature_engineering(train_metadata_2018)
+        if out_dim == 2:
+            train_metadata_2018["label"] = np.where(
+                train_metadata_2018["label"].isin(malignant_labels), 1, 0
+            )
+        elif out_dim == 9:
+            train_metadata_2018["label"] = train_metadata_2018["label"].map(label2idx)
+        else:
+            raise ValueError(f"Invalid out_dim: {out_dim}")
+    else:
+        train_metadata_2018 = pd.DataFrame()
+        train_images_2018 = None
 
     return (
         train_metadata,
@@ -288,5 +332,7 @@ def get_data(data_dir, data_2020_dir, data_2019_dir, out_dim, debug, seed):
         train_images_2020,
         train_metadata_2019,
         train_images_2019,
+        train_metadata_2018,
+        train_images_2018,
         malignant_idx,
     )

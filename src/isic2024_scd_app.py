@@ -7,16 +7,6 @@ from typing import Tuple
 
 from modal import App, Image, Mount, Secret, Volume
 
-GPU_CONFIG = os.environ.get("GPU_CONFIG", "a10g:1")
-
-app = App(name="isic2024-scd", secrets=[Secret.from_name("kaggle-api-token")])
-
-image = Image.debian_slim(python_version="3.10").poetry_install_from_file(
-    poetry_pyproject_toml="../pyproject.toml",
-    poetry_lockfile="../poetry.lock",
-    only=["main"],
-)
-
 
 def mount_script(script_filename: str):
     script_local_path = Path(__file__).parent / script_filename
@@ -32,26 +22,17 @@ def mount_script(script_filename: str):
     ), script_filename
 
 
+GPU_CONFIG = os.environ.get("GPU_CONFIG", "a10g:1")
+app = App(name="isic2024-scd", secrets=[Secret.from_name("kaggle-api-token")])
+image = Image.debian_slim(python_version="3.10").poetry_install_from_file(
+    poetry_pyproject_toml="../pyproject.toml",
+    poetry_lockfile="../poetry.lock",
+    only=["main"],
+)
 train_script_mount, train_script_filename = mount_script("train.py")
 dataset_script_mount, _ = mount_script("dataset.py")
 models_script_mount, _ = mount_script("models.py")
 utils_script_mount, _ = mount_script("utils.py")
-evaluate_script_mount, evaluate_script_filename = mount_script("evaluate.py")
-
-
-@dataclass
-class Config:
-    mixed_precision: bool = "fp16"
-    image_size: int = 64
-    n_meta_dim: str = "512,128"
-    train_batch_size: int = 64
-    val_batch_size: int = 256
-    num_workers: int = 4
-    learning_rate: float = 1e-3
-    num_epochs: int = 10
-    n_tta: int = 10
-    seed: int = 2022
-
 
 artifacts_volume = Volume.from_name("isic2024-scd-artifacts", create_if_missing=True)
 ARTIFACTS_DIR = Path("/kaggle/working")
@@ -140,6 +121,7 @@ def download_competition_data(path: Path, recreate: bool = False):
 external_data_mapping = {
     "2020": {"id": 70, "path": INPUT_DIR / "isic-2020-challenge"},
     "2019": {"id": 65, "path": INPUT_DIR / "isic-2019-challenge"},
+    "2018": {"id": 66, "path": INPUT_DIR / "isic-2018-challenge"},
 }
 
 
@@ -240,7 +222,6 @@ def download_external_data(year: str, recreate: bool = False):
         dataset_script_mount,
         models_script_mount,
         utils_script_mount,
-        evaluate_script_mount
     ],
     volumes={str(INPUT_DIR): input_volume},
     timeout=60 * 60 * 6,  # 6 hours
@@ -254,6 +235,8 @@ def download_data(ext: str = "", recreate: bool = False):
         download_external_data("2020", recreate)
     if "2019" in ext:
         download_external_data("2019", recreate)
+    if "2018" in ext:
+        download_external_data("2018", recreate)
     input_volume.commit()
 
 
@@ -264,7 +247,6 @@ def download_data(ext: str = "", recreate: bool = False):
         dataset_script_mount,
         models_script_mount,
         utils_script_mount,
-        evaluate_script_mount
     ],
     volumes={str(INPUT_DIR): input_volume},
     timeout=60 * 60,  # 1 hour
@@ -311,6 +293,24 @@ def upload_external_data(year: str):
     print(f"External data for {year} uploaded to Kaggle ✅")
 
 
+@dataclass
+class Config:
+    mixed_precision: bool = "fp16"
+    image_size: int = 64
+    n_meta_dim: str = "256,128"
+    batch_size: int = 64
+    num_workers: int = 8
+    init_lr: float = 3e-5
+    num_epochs: int = 15
+    n_tta: int = 10
+    seed: int = 2022
+
+    ext: str = "2020,2019,2018"
+    out_dim: int = 9
+    use_meta: bool = True
+    debug: bool = False
+
+
 @app.function(
     image=image,
     mounts=[
@@ -318,16 +318,17 @@ def upload_external_data(year: str):
         dataset_script_mount,
         models_script_mount,
         utils_script_mount,
-        evaluate_script_mount
     ],
     volumes={str(INPUT_DIR): input_volume, str(ARTIFACTS_DIR): artifacts_volume},
     gpu=GPU_CONFIG,
     timeout=60 * 60 * 24,  # 24 hours
+    cpu=Config.num_workers,
 )
-def train(model_name: str, version: str, fold: int, ext: str = "", out_dim: int = 9, use_meta: bool = False):
+def train(model_name: str, version: str, fold: int):
     import subprocess
+    from pprint import pprint
 
-    from accelerate.utils import get_gpu_info, write_basic_config
+    from accelerate.utils import write_basic_config
 
     def _exec_subprocess(cmd: list[str]):
         """Executes subprocess and prints log to terminal while subprocess is running."""
@@ -346,140 +347,62 @@ def train(model_name: str, version: str, fold: int, ext: str = "", out_dim: int 
 
     setup_kaggle()
     config = Config()
+    print(f"Running with config:")
+    pprint(config.__dict__)
 
     data_dir = INPUT_DIR / "isic-2024-challenge"
-    if "2020" in ext:
+    if "2020" in config.ext:
         data_2020_dir = external_data_mapping["2020"]["path"]
     else:
         data_2020_dir = ""
-    if "2019" in ext:
+    if "2019" in config.ext:
         data_2019_dir = external_data_mapping["2019"]["path"]
     else:
         data_2019_dir = ""
+    if "2018" in config.ext:
+        data_2018_dir = external_data_mapping["2018"]["path"]
+    else:
+        data_2018_dir = ""
 
     model_identifier = f"{model_name}_{version}"
     model_dir = Path(ARTIFACTS_DIR) / model_identifier
     model_dir.mkdir(parents=True, exist_ok=True)
 
     write_basic_config(mixed_precision=config.mixed_precision)
-    num_processes = get_gpu_info()[-1]
-    print(f"Number of Processes: {num_processes}")
     print("Launching training script")
     commands = (
         [
             "accelerate",
             "launch",
-        ]
-        + (
-            [
-                "--multi_gpu",
-                f"--num_processes={num_processes}",
-            ]
-            if num_processes > 1
-            else []
-        )
-        + [
             train_script_filename,
             f"--model_identifier={model_identifier}",
             f"--model_name={model_name}",
-            f"--data_dir={data_dir}",
             f"--model_dir={model_dir}",
-            f"--mixed_precision={config.mixed_precision}",
-            f"--fold={fold}",
-            f"--out_dim={out_dim}",
-            f"--image_size={config.image_size}",
-            f"--train_batch_size={config.train_batch_size}",
-            f"--val_batch_size={config.val_batch_size}",
-            f"--learning_rate={config.learning_rate}",
-            f"--num_epochs={config.num_epochs}",
-            f"--n_tta={config.n_tta}",
-            f"--seed={config.seed}",
-            # "--debug",
+            f"--data_dir={data_dir}",
         ]
         + ([f"--data_2020_dir={data_2020_dir}"] if data_2020_dir else [])
         + ([f"--data_2019_dir={data_2019_dir}"] if data_2019_dir else [])
-        + (["--use_meta", f"--n_meta_dim={config.n_meta_dim}"] if use_meta else [])
-    )
-    print(subprocess.list2cmdline(commands))
-    _exec_subprocess(commands)
-    artifacts_volume.commit()
-
-
-@app.function(
-    image=image,
-    mounts=[
-        train_script_mount,
-        dataset_script_mount,
-        models_script_mount,
-        utils_script_mount,
-        evaluate_script_mount
-    ],
-    volumes={str(INPUT_DIR): input_volume, str(ARTIFACTS_DIR): artifacts_volume},
-    gpu=GPU_CONFIG,
-    timeout=60 * 60,  # 1 hour
-)
-def evaluate(model_name: str, version: str, fold: int, epoch: int, out_dim: int, use_meta: bool = False):
-    import subprocess
-
-    from accelerate.utils import get_gpu_info, write_basic_config
-
-    def _exec_subprocess(cmd: list[str]):
-        """Executes subprocess and prints log to terminal while subprocess is running."""
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-        with process.stdout as pipe:
-            for line in iter(pipe.readline, b""):
-                line_str = line.decode()
-                print(f"{line_str}", end="")
-
-        if exitcode := process.wait() != 0:
-            raise subprocess.CalledProcessError(exitcode, "\n".join(cmd))
-
-    setup_kaggle()
-    config = Config()
-
-    data_dir = INPUT_DIR / "isic-2024-challenge"
-
-    model_identifier = f"{model_name}_{version}"
-    model_dir = Path(ARTIFACTS_DIR) / model_identifier
-    model_dir.mkdir(parents=True, exist_ok=True)
-
-    write_basic_config(mixed_precision=config.mixed_precision)
-    num_processes = get_gpu_info()[-1]
-    print(f"Number of Processes: {num_processes}")
-    print("Launching evaluation script")
-    commands = (
-        [
-            "accelerate",
-            "launch",
+        + ([f"--data_2018_dir={data_2018_dir}"] if data_2018_dir else [])
+        + [
+            f"--fold={fold}",
+            f"--out_dim={config.out_dim}",
         ]
         + (
-            [
-                "--multi_gpu",
-                f"--num_processes={num_processes}",
-            ]
-            if num_processes > 1
+            ["--use_meta", f"--n_meta_dim={config.n_meta_dim}"]
+            if config.use_meta
             else []
         )
         + [
-            evaluate_script_filename,
-            f"--model_identifier={model_identifier}",
-            f"--model_name={model_name}",
-            f"--data_dir={data_dir}",
-            f"--model_dir={model_dir}",
             f"--mixed_precision={config.mixed_precision}",
-            f"--fold={fold}",
-            f"--epoch={epoch}",
-            f"--out_dim={out_dim}",
             f"--image_size={config.image_size}",
-            f"--val_batch_size={config.val_batch_size}",
+            f"--batch_size={config.batch_size}",
+            f"--num_workers={config.num_workers}",
+            f"--init_lr={config.init_lr}",
+            f"--num_epochs={config.num_epochs}",
             f"--n_tta={config.n_tta}",
             f"--seed={config.seed}",
         ]
-        + (["--use_meta", f"--n_meta_dim={config.n_meta_dim}"] if use_meta else [])
+        + (["--debug"] if config.debug else [])
     )
     print(subprocess.list2cmdline(commands))
     _exec_subprocess(commands)
@@ -493,12 +416,11 @@ def evaluate(model_name: str, version: str, fold: int, epoch: int, out_dim: int,
         dataset_script_mount,
         models_script_mount,
         utils_script_mount,
-        evaluate_script_mount
     ],
     volumes={str(ARTIFACTS_DIR): artifacts_volume},
     timeout=60 * 60,  # 1 hour
 )
-def upload_weights(model_name: str, version: str, out_dim: int, use_meta: bool = False):
+def upload_weights(model_name: str, version: str):
     import json
     import subprocess
     from glob import glob
@@ -574,8 +496,6 @@ def upload_weights(model_name: str, version: str, out_dim: int, use_meta: bool =
     print(f"CV PAUC STD: {cv_pauc_std}")
 
     config = Config()
-    config.out_dim = out_dim
-    config.use_meta = use_meta
     metadata = {
         "params": config.__dict__,
         "best_num_epochs": best_num_epochs,

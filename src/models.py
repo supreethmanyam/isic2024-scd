@@ -5,7 +5,15 @@ from timm import create_model
 
 
 class ISICNet(nn.Module):
-    def __init__(self, model_name, out_dim, n_features=0, n_meta_dim=(512, 128), pretrained=True, infer=False):
+    def __init__(
+        self,
+        model_name,
+        out_dim,
+        n_features=0,
+        n_meta_dim=(512, 128),
+        pretrained=True,
+        infer=False,
+    ):
         super(ISICNet, self).__init__()
         self.infer = infer
         self.model = create_model(
