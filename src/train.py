@@ -509,7 +509,7 @@ def main(args):
         )
         logger.info(
             f"Fold: {args.fold} | Epoch: {epoch} | LR: {lr:.7f} |"
-            f" Train loss: {train_loss:.5f} | Val loss: {val_loss:.5f}"
+            f" Train loss: {train_loss:.5f} | Val loss: {val_loss:.5f} |"
             f" Val AUC: {val_auc:.5f} | Val pAUC: {val_pauc:.5f}"
         )
         if val_pauc > best_val_pauc:
