@@ -296,7 +296,7 @@ def upload_external_data(year: str):
 @dataclass
 class Config:
     mixed_precision: bool = "fp16"
-    image_size: int = 128
+    image_size: int = 192
     n_meta_dim: str = "256,128"
     batch_size: int = 64
     num_workers: int = 8

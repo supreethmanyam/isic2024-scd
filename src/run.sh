@@ -1,11 +1,11 @@
-modal run -d isic2024_scd_app.py::train --model-name efficientnet_b1 --version v1 --fold 1
-#Link: https://modal.com/supreeth-manyam/main/apps/ap-ExqITw9OCYrKcQzjviJKpd
-modal run -d isic2024_scd_app.py::train --model-name efficientnet_b1 --version v1 --fold 2
-#Link: https://modal.com/supreeth-manyam/main/apps/ap-iRubUsqMdMrU6tDuQgmqLe
-modal run -d isic2024_scd_app.py::train --model-name efficientnet_b1 --version v1 --fold 3
-#Link: https://modal.com/supreeth-manyam/main/apps/ap-DD29CkoNm8dYlKY8KieZty
-modal run -d isic2024_scd_app.py::train --model-name efficientnet_b1 --version v1 --fold 4
-#Link: https://modal.com/supreeth-manyam/main/apps/ap-SEwYGp3It1vlGGXRSo5XVa
-modal run -d isic2024_scd_app.py::train --model-name efficientnet_b1 --version v1 --fold 5
-#Link: https://modal.com/supreeth-manyam/main/apps/ap-HtMQVQKRWiwzpVsdSD02OJ
-modal run -d isic2024_scd_app.py::upload_weights --model-name efficientnet_b1 --version v1
+modal run -d isic2024_scd_app.py::train --model-name efficientnet_b2 --version v1 --fold 1
+#Link: https://modal.com/supreeth-manyam/main/apps/ap-94jO8YI7QGOVvbuwy2RIxz
+modal run -d isic2024_scd_app.py::train --model-name efficientnet_b2 --version v1 --fold 2
+#Link: https://modal.com/supreeth-manyam/main/apps/ap-A0CP6wsqfPfJUqLOkGq3HA
+modal run -d isic2024_scd_app.py::train --model-name efficientnet_b2 --version v1 --fold 3
+#Link: https://modal.com/supreeth-manyam/main/apps/ap-bFqWRNZOE21fiT3vFwVLie
+modal run -d isic2024_scd_app.py::train --model-name efficientnet_b2 --version v1 --fold 4
+#Link: https://modal.com/supreeth-manyam/main/apps/ap-M3d6AzujLZTI4hbyyseY2U
+modal run -d isic2024_scd_app.py::train --model-name efficientnet_b2 --version v1 --fold 5
+#Link: https://modal.com/supreeth-manyam/main/apps/ap-5BwYWAo5MfotBRmFrWsWxJ
+modal run -d isic2024_scd_app.py::upload_weights --model-name efficientnet_b2 --version v1
