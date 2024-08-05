@@ -296,12 +296,12 @@ def upload_external_data(year: str):
 @dataclass
 class Config:
     mixed_precision: bool = "fp16"
-    image_size: int = 64
+    image_size: int = 128
     n_meta_dim: str = "256,128"
     batch_size: int = 64
     num_workers: int = 8
     init_lr: float = 3e-5
-    num_epochs: int = 15
+    num_epochs: int = 25
     n_tta: int = 10
     seed: int = 2022
 
