@@ -1,5 +1,8 @@
 import numpy as np
 from sklearn.metrics import auc, roc_auc_score, roc_curve
+from accelerate.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 def compute_auc(y_true, y_pred) -> float:

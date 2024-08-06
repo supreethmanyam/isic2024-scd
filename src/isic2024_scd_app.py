@@ -29,13 +29,15 @@ image = Image.debian_slim(python_version="3.10").poetry_install_from_file(
     poetry_lockfile="../poetry.lock",
     only=["main"],
 )
+pretrain_script_mount, pretrain_script_filename = mount_script("pretrain.py")
 train_script_mount, train_script_filename = mount_script("train.py")
 dataset_script_mount, _ = mount_script("dataset.py")
 models_script_mount, _ = mount_script("models.py")
+engine_script_mount, _ = mount_script("engine.py")
 utils_script_mount, _ = mount_script("utils.py")
 
-artifacts_volume = Volume.from_name("isic2024-scd-artifacts", create_if_missing=True)
-ARTIFACTS_DIR = Path("/kaggle/working")
+weights_volume = Volume.from_name("isic2024-scd-weights", create_if_missing=True)
+WEIGHTS_DIR = Path("/kaggle/working")
 
 input_volume = Volume.from_name("isic2024-scd-input", create_if_missing=True)
 INPUT_DIR = Path("/kaggle/input")
@@ -218,9 +220,11 @@ def download_external_data(year: str, recreate: bool = False):
 @app.function(
     image=image,
     mounts=[
+        pretrain_script_mount,
         train_script_mount,
         dataset_script_mount,
         models_script_mount,
+        engine_script_mount,
         utils_script_mount,
     ],
     volumes={str(INPUT_DIR): input_volume},
@@ -243,9 +247,11 @@ def download_data(ext: str = "", recreate: bool = False):
 @app.function(
     image=image,
     mounts=[
+        pretrain_script_mount,
         train_script_mount,
         dataset_script_mount,
         models_script_mount,
+        engine_script_mount,
         utils_script_mount,
     ],
     volumes={str(INPUT_DIR): input_volume},
@@ -296,35 +302,36 @@ def upload_external_data(year: str):
 @dataclass
 class Config:
     mixed_precision: bool = "fp16"
-    image_size: int = 192
-    n_meta_dim: str = "256,128"
+    image_size: int = 64
     batch_size: int = 64
     num_workers: int = 8
     init_lr: float = 3e-5
-    num_epochs: int = 25
-    n_tta: int = 10
+    num_epochs: int = 15
+    n_tta: int = 6
     seed: int = 2022
 
-    ext: str = "2020,2019"
-    out_dim: int = 9
-    use_meta: bool = False
+    ext: str = "2020,2019,2018"
+    only_malignant: bool = True
     debug: bool = False
 
 
 @app.function(
     image=image,
     mounts=[
+        pretrain_script_mount,
         train_script_mount,
         dataset_script_mount,
         models_script_mount,
+        engine_script_mount,
         utils_script_mount,
     ],
-    volumes={str(INPUT_DIR): input_volume, str(ARTIFACTS_DIR): artifacts_volume},
+    volumes={str(INPUT_DIR): input_volume, str(WEIGHTS_DIR): weights_volume},
     gpu=GPU_CONFIG,
     timeout=60 * 60 * 24,  # 24 hours
     cpu=Config.num_workers,
 )
 def train(model_name: str, version: str, fold: int):
+    import json
     import subprocess
     from pprint import pprint
 
@@ -349,6 +356,14 @@ def train(model_name: str, version: str, fold: int):
     config = Config()
     print(f"Running with config:")
     pprint(config.__dict__)
+    metadata = {
+        "params": config.__dict__
+    }
+    model_identifier = f"{model_name}_{version}"
+    model_dir = Path(WEIGHTS_DIR) / model_identifier
+    model_dir.mkdir(parents=True, exist_ok=True)
+    with open(model_dir / f"{model_identifier}_run_metadata.json", "w") as f:
+        json.dump(metadata, f)
 
     data_dir = INPUT_DIR / "isic-2024-challenge"
     if "2020" in config.ext:
@@ -364,17 +379,13 @@ def train(model_name: str, version: str, fold: int):
     else:
         data_2018_dir = ""
 
-    model_identifier = f"{model_name}_{version}"
-    model_dir = Path(ARTIFACTS_DIR) / model_identifier
-    model_dir.mkdir(parents=True, exist_ok=True)
-
     write_basic_config(mixed_precision=config.mixed_precision)
     print("Launching training script")
     commands = (
         [
             "accelerate",
             "launch",
-            train_script_filename,
+            pretrain_script_filename,
             f"--model_identifier={model_identifier}",
             f"--model_name={model_name}",
             f"--model_dir={model_dir}",
@@ -385,13 +396,8 @@ def train(model_name: str, version: str, fold: int):
         + ([f"--data_2018_dir={data_2018_dir}"] if data_2018_dir else [])
         + [
             f"--fold={fold}",
-            f"--out_dim={config.out_dim}",
         ]
-        + (
-            ["--use_meta", f"--n_meta_dim={config.n_meta_dim}"]
-            if config.use_meta
-            else []
-        )
+        + (["--only_malignant"] if config.only_malignant else [])
         + [
             f"--mixed_precision={config.mixed_precision}",
             f"--image_size={config.image_size}",
@@ -406,18 +412,20 @@ def train(model_name: str, version: str, fold: int):
     )
     print(subprocess.list2cmdline(commands))
     _exec_subprocess(commands)
-    artifacts_volume.commit()
+    weights_volume.commit()
 
 
 @app.function(
     image=image,
     mounts=[
+        pretrain_script_mount,
         train_script_mount,
         dataset_script_mount,
         models_script_mount,
+        engine_script_mount,
         utils_script_mount,
     ],
-    volumes={str(ARTIFACTS_DIR): artifacts_volume},
+    volumes={str(WEIGHTS_DIR): weights_volume},
     timeout=60 * 60,  # 1 hour
 )
 def upload_weights(model_name: str, version: str):
@@ -434,7 +442,7 @@ def upload_weights(model_name: str, version: str):
     setup_kaggle()
 
     model_identifier = f"{model_name}_{version}"
-    model_dir = Path(ARTIFACTS_DIR) / model_identifier
+    model_dir = Path(WEIGHTS_DIR) / model_identifier
 
     oof_preds_fold_filepaths = glob(
         str(model_dir / f"oof_preds_{model_name}_{version}_fold_*.csv")
@@ -495,9 +503,7 @@ def upload_weights(model_name: str, version: str):
     print(f"CV AUC STD: {cv_auc_std}")
     print(f"CV PAUC STD: {cv_pauc_std}")
 
-    config = Config()
-    metadata = {
-        "params": config.__dict__,
+    metrics_metadata = {
         "best_num_epochs": best_num_epochs,
         "val_auc_scores": val_auc_scores,
         "val_pauc_scores": val_pauc_scores,
@@ -509,6 +515,9 @@ def upload_weights(model_name: str, version: str):
         "cv_pauc_std": cv_pauc_std,
     }
 
+    with open(model_dir / f"{model_identifier}_run_metadata.json", "r") as f:
+        metadata = json.load(f)
+        metadata = {**metadata, **metrics_metadata}
     with open(model_dir / f"{model_identifier}_run_metadata.json", "w") as f:
         json.dump(metadata, f)
 
