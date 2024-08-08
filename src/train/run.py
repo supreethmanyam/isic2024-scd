@@ -79,6 +79,7 @@ def parse_args(input_args=None):
     )
     parser.add_argument("--only_malignant", action="store_true", default=True,
                         help="Use only malignant samples from external data.")
+    parser.add_argument("--target_mode", type=str, required=True, choices=["binary", "multi"],)
     parser.add_argument(
         "--mixed_precision",
         type=str,
@@ -168,6 +169,7 @@ def main(args):
         args.data_dir,
         args.data_2020_dir,
         args.data_2019_dir,
+        target_mode=args.target_mode,
         only_malignant=args.only_malignant,
     )
 
@@ -255,10 +257,14 @@ def main(args):
     )
     model = ISICNet(
         model_name=args.model_name,
+        target_mode=args.target_mode,
         pretrained=True,
     )
     model = model.to(accelerator.device)
-    criterion = nn.BCELoss()
+    if args.target_mode == "binary":
+        criterion = nn.BCELoss()
+    elif args.target_mode == "multi":
+        criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.init_lr)
     lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
@@ -300,6 +306,7 @@ def main(args):
             dev_dataloader,
             lr_scheduler,
             accelerator,
+            args.target_mode,
         )
         (
             val_loss,
@@ -314,6 +321,7 @@ def main(args):
             val_dataloader,
             accelerator,
             args.n_tta,
+            args.target_mode,
         )
         train_losses.append(train_loss)
         val_losses.append(val_loss)

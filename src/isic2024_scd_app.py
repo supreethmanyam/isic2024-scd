@@ -268,6 +268,7 @@ def mount_folder(folder_name: str):
 
 @dataclass
 class Config:
+    target_mode: str = "multi"
     mixed_precision: bool = "fp16"
     image_size: int = 64
     train_batch_size: int = 64
@@ -355,6 +356,7 @@ def train(model_name: str, version: str, fold: int):
         ]
         + (["--only_malignant"] if config.only_malignant else [])
         + [
+            f"--target_mode={config.target_mode}",
             f"--mixed_precision={config.mixed_precision}",
             f"--image_size={config.image_size}",
             f"--train_batch_size={config.train_batch_size}",

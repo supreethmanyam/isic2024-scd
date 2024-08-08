@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 from utils import compute_auc, compute_pauc, logger
+from dataset import all_labels, malignant_idx
 
 
 def train_epoch(
@@ -11,6 +12,7 @@ def train_epoch(
     dev_dataloader,
     lr_scheduler,
     accelerator,
+    target_mode,
     log_interval=100,
 ):
     model.train()
@@ -18,9 +20,17 @@ def train_epoch(
     total_steps = len(dev_dataloader)
     for step, (images, targets) in enumerate(dev_dataloader):
         optimizer.zero_grad()
-        logits = model(images)
-        probs = torch.sigmoid(logits)
-        loss = criterion(probs, targets.unsqueeze(1))
+        if target_mode == "binary":
+            logits = model(images)
+            probs = torch.sigmoid(logits)
+            targets = targets.float().unsqueeze(1)
+            loss = criterion(probs, targets)
+        elif target_mode == "multi":
+            logits = model(images)
+            targets = targets.long()
+            loss = criterion(logits, targets)
+        else:
+            raise ValueError(f"Invalid target_mode: {target_mode}")
         accelerator.backward(loss)
         optimizer.step()
         lr_scheduler.step()
@@ -61,6 +71,7 @@ def val_epoch(
     val_dataloader,
     accelerator,
     n_tta,
+    target_mode,
     log_interval=10,
 ):
     model.eval()
@@ -70,17 +81,31 @@ def val_epoch(
     total_steps = len(val_dataloader)
     with torch.no_grad():
         for step, (images, targets) in enumerate(val_dataloader):
-            logits = 0
-            probs = 0
-            for i in range(n_tta):
-                logits_iter = model(get_trans(images, i))
-                logits += logits_iter
-                probs += torch.sigmoid(logits_iter)
-            logits /= n_tta
-            probs /= n_tta
+            if target_mode == "binary":
+                logits = 0
+                probs = 0
+                for i in range(n_tta):
+                    logits_iter = model(get_trans(images, i))
+                    logits += logits_iter
+                    probs += torch.sigmoid(logits_iter)
+                logits /= n_tta
+                probs /= n_tta
 
-            targets = targets.unsqueeze(1)
-            loss = criterion(probs, targets)
+                targets = targets.float().unsqueeze(1)
+                loss = criterion(probs, targets)
+            elif target_mode == "multi":
+                out_dim = len(all_labels)
+                logits = torch.zeros((images.shape[0], out_dim)).to(accelerator.device)
+                probs = torch.zeros((images.shape[0], out_dim)).to(accelerator.device)
+                for idx in range(n_tta):
+                    logits_iter = model(get_trans(images, idx))
+                    logits += logits_iter
+                    probs += logits_iter.softmax(1)
+                logits /= n_tta
+                probs /= n_tta
+
+                targets = targets.long()
+                loss = criterion(logits, targets)
             val_loss.append(loss.detach().cpu().numpy())
 
             probs, targets = accelerator.gather((probs, targets))
@@ -93,6 +118,11 @@ def val_epoch(
     val_loss = np.mean(val_loss)
     val_probs = torch.cat(val_probs).cpu().numpy()
     val_targets = torch.cat(val_targets).cpu().numpy()
+    if target_mode == "multi":
+        val_probs = val_probs[:, malignant_idx].sum(1)
+        val_targets = ((val_targets == malignant_idx[0]) |
+                       (val_targets == malignant_idx[1]) |
+                       (val_targets == malignant_idx[2]))
     val_auc = compute_auc(val_targets, val_probs)
     val_pauc = compute_pauc(val_targets, val_probs, min_tpr=0.8)
     return (
@@ -104,20 +134,31 @@ def val_epoch(
     )
 
 
-def predict(model, test_dataloader, accelerator, n_tta, log_interval=10):
+def predict(model, test_dataloader, accelerator, n_tta, target_mode, log_interval=10):
     model.eval()
     test_probs = []
     total_steps = len(test_dataloader)
     with torch.no_grad():
         for step, images in enumerate(test_dataloader):
-            logits = 0
-            probs = 0
-            for i in range(n_tta):
-                logits_iter = model(get_trans(images, i))
-                logits += logits_iter
-                probs += torch.sigmoid(logits_iter)
-            logits /= n_tta
-            probs /= n_tta
+            if target_mode == "binary":
+                logits = 0
+                probs = 0
+                for i in range(n_tta):
+                    logits_iter = model(get_trans(images, i))
+                    logits += logits_iter
+                    probs += torch.sigmoid(logits_iter)
+                logits /= n_tta
+                probs /= n_tta
+            elif target_mode == "multi":
+                out_dim = len(all_labels)
+                logits = torch.zeros((images.shape[0], out_dim)).to(accelerator.device)
+                probs = torch.zeros((images.shape[0], out_dim)).to(accelerator.device)
+                for idx in range(n_tta):
+                    logits_iter = model(get_trans(images, idx))
+                    logits += logits_iter
+                    probs += logits_iter.softmax(1)
+                logits /= n_tta
+                probs /= n_tta
 
             probs = accelerator.gather(probs)
             test_probs.append(probs)
@@ -128,4 +169,6 @@ def predict(model, test_dataloader, accelerator, n_tta, log_interval=10):
                 )
 
     test_probs = torch.cat(test_probs).cpu().numpy()
+    if target_mode == "multi":
+        test_probs = test_probs[:, malignant_idx].sum(1)
     return test_probs

@@ -1,12 +1,14 @@
 import torch.nn as nn
 import torch.nn.functional as F
 from timm import create_model
+from dataset import all_labels
 
 
 class ISICNet(nn.Module):
     def __init__(
         self,
         model_name,
+        target_mode,
         pretrained=True,
     ):
         super(ISICNet, self).__init__()
@@ -18,7 +20,10 @@ class ISICNet(nn.Module):
             global_pool="",
         )
         in_dim = self.model.num_features
-        self.classifier = nn.Linear(in_dim, 1)
+        if target_mode == "binary":
+            self.classifier = nn.Linear(in_dim, 1)
+        elif target_mode == "multi":
+            self.classifier = nn.Linear(in_dim, len(all_labels))
         self.dropouts = nn.ModuleList([nn.Dropout(0.5) for _ in range(5)])
 
     def forward(self, images):
