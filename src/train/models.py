@@ -7,7 +7,7 @@ class ISICNet(nn.Module):
     def __init__(
         self,
         model_name,
-        pretrained=True
+        pretrained=True,
     ):
         super(ISICNet, self).__init__()
         self.model = create_model(

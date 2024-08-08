@@ -4,6 +4,7 @@ import logging
 import time
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
@@ -74,12 +75,6 @@ def parse_args(input_args=None):
         help="The directory where the 2019 data is stored.",
     )
     parser.add_argument(
-        "--data_2018_dir",
-        type=str,
-        default=None,
-        help="The directory where the 2019 data is stored.",
-    )
-    parser.add_argument(
         "--fold", type=int, default=None, required=True, help="Fold number."
     )
     parser.add_argument("--only_malignant", action="store_true", default=True,
@@ -97,10 +92,16 @@ def parse_args(input_args=None):
     )
     parser.add_argument("--image_size", type=int, default=64, help="Image size.")
     parser.add_argument(
-        "--batch_size",
+        "--train_batch_size",
         type=int,
         default=64,
-        help="Batch size for training and validation.",
+        help="Batch size for training.",
+    )
+    parser.add_argument(
+        "--val_batch_size",
+        type=int,
+        default=64,
+        help="Batch size for validation.",
     )
     parser.add_argument(
         "--num_workers", type=int, default=4, help="Number of workers for dataloader."
@@ -163,13 +164,10 @@ def main(args):
         train_images_2020,
         train_metadata_2019,
         train_images_2019,
-        train_metadata_2018,
-        train_images_2018,
     ) = get_data(
         args.data_dir,
         args.data_2020_dir,
         args.data_2019_dir,
-        args.data_2018_dir,
         only_malignant=args.only_malignant,
     )
 
@@ -177,12 +175,12 @@ def main(args):
         args.num_epochs = 2
         dev_index = (
             train_metadata[train_metadata["fold"] != args.fold]
-            .sample(args.batch_size * 3, random_state=args.seed)
+            .sample(args.train_batch_size * 3, random_state=args.seed)
             .index
         )
         val_index = (
             train_metadata[train_metadata["fold"] == args.fold]
-            .sample(args.batch_size * 100, random_state=args.seed)
+            .sample(args.val_batch_size * 10, random_state=args.seed)
             .index
         )
     else:
@@ -209,7 +207,7 @@ def main(args):
         logger.info("Using 2020 data")
         if args.debug:
             train_metadata_2020 = train_metadata_2020.sample(
-                args.batch_size * 1
+                args.train_batch_size * 1
             ).reset_index(drop=True)
         train_dataset_2020 = ISICDataset(
             train_metadata_2020,
@@ -222,7 +220,7 @@ def main(args):
         logger.info("Using 2019 data")
         if args.debug:
             train_metadata_2019 = train_metadata_2019.sample(
-                args.batch_size * 1
+                args.train_batch_size * 1
             ).reset_index(drop=True)
         train_dataset_2019 = ISICDataset(
             train_metadata_2019,
@@ -231,45 +229,30 @@ def main(args):
             infer=False,
         )
         dev_dataset = torch.utils.data.ConcatDataset([dev_dataset, train_dataset_2019])
-    if not train_metadata_2018.empty:
-        logger.info("Using 2018 data")
-        if args.debug:
-            train_metadata_2018 = train_metadata_2018.sample(
-                args.batch_size * 1
-            ).reset_index(drop=True)
-        train_dataset_2018 = ISICDataset(
-            train_metadata_2018,
-            train_images_2018,
-            augment=dev_augment(args.image_size),
-            infer=False,
-        )
-        dev_dataset = torch.utils.data.ConcatDataset([dev_dataset, train_dataset_2018])
 
-    if not train_metadata_2020.empty or not train_metadata_2019.empty or not train_metadata_2018.empty:
+    if not train_metadata_2020.empty or not train_metadata_2019.empty:
         if args.only_malignant:
             logger.info("Using only malignant data")
             logger.info(f"Using {train_metadata_2020.shape[0]} 2020 samples")
             logger.info(f"Using {train_metadata_2019.shape[0]} 2019 samples")
-            logger.info(f"Using {train_metadata_2018.shape[0]} 2018 samples")
 
     sampler = RandomSampler(dev_dataset)
 
     dev_dataloader = DataLoader(
         dev_dataset,
-        batch_size=args.batch_size,
+        batch_size=args.train_batch_size,
         sampler=sampler,
         num_workers=args.num_workers,
         pin_memory=True,
     )
     val_dataloader = DataLoader(
         val_dataset,
-        batch_size=args.batch_size,
+        batch_size=args.val_batch_size,
         shuffle=False,
         num_workers=args.num_workers,
         drop_last=False,
         pin_memory=True,
     )
-
     model = ISICNet(
         model_name=args.model_name,
         pretrained=True,
@@ -301,7 +284,10 @@ def main(args):
     best_val_loss = 0
     best_epoch = 0
     best_val_probs = None
-
+    train_losses = []
+    val_losses = []
+    val_paucs = []
+    val_aucs = []
     for epoch in range(1, args.num_epochs + 1):
         logger.info(f"Fold {args.fold} | Epoch {epoch}")
         start_time = time.time()
@@ -320,7 +306,7 @@ def main(args):
             val_auc,
             val_pauc,
             val_probs,
-            val_labels,
+            val_targets,
         ) = val_epoch(
             epoch,
             model,
@@ -329,6 +315,10 @@ def main(args):
             accelerator,
             args.n_tta,
         )
+        train_losses.append(train_loss)
+        val_losses.append(val_loss)
+        val_paucs.append(val_pauc)
+        val_aucs.append(val_auc)
         logger.info(
             f"Fold: {args.fold} | Epoch: {epoch} | LR: {lr:.7f} |"
             f" Train loss: {train_loss:.5f} | Val loss: {val_loss:.5f} |"
@@ -369,7 +359,6 @@ def main(args):
             "isic_id": val_metadata["isic_id"],
             "patient_id": val_metadata["patient_id"],
             "fold": args.fold,
-            "label": val_metadata["label"],
             "target": val_metadata["target"],
             f"oof_{args.model_identifier}": best_val_probs.flatten(),
         }
@@ -385,6 +374,10 @@ def main(args):
         "best_val_auc": best_val_auc,
         "best_val_pauc": best_val_pauc,
         "best_val_loss": float(best_val_loss),
+        "train_losses": np.array(train_losses, dtype=float).tolist(),
+        "val_losses": np.array(val_losses, dtype=float).tolist(),
+        "val_paucs": val_paucs,
+        "val_aucs": val_aucs,
     }
     with open(f"{args.model_dir}/models/fold_{args.fold}/metadata.json", "w") as f:
         json.dump(fold_metadata, f)

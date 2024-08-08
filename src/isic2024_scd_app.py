@@ -8,20 +8,6 @@ from typing import Tuple
 from modal import App, Image, Mount, Secret, Volume
 
 
-def mount_script(script_filename: str):
-    script_local_path = Path(__file__).parent / script_filename
-    script_remote_path = Path(f"/root/{script_filename}")
-
-    if not script_local_path.exists():
-        raise FileNotFoundError(
-            f"{script_filename} not found! Place the script in the same directory"
-        )
-
-    return Mount.from_local_file(
-        script_local_path, str(script_remote_path)
-    ), script_filename
-
-
 GPU_CONFIG = os.environ.get("GPU_CONFIG", "a10g:1")
 app = App(name="isic2024-scd", secrets=[Secret.from_name("kaggle-api-token")])
 image = Image.debian_slim(python_version="3.10").poetry_install_from_file(
@@ -29,12 +15,6 @@ image = Image.debian_slim(python_version="3.10").poetry_install_from_file(
     poetry_lockfile="../poetry.lock",
     only=["main"],
 )
-pretrain_script_mount, pretrain_script_filename = mount_script("pretrain.py")
-train_script_mount, train_script_filename = mount_script("train.py")
-dataset_script_mount, _ = mount_script("dataset.py")
-models_script_mount, _ = mount_script("models.py")
-engine_script_mount, _ = mount_script("engine.py")
-utils_script_mount, _ = mount_script("utils.py")
 
 weights_volume = Volume.from_name("isic2024-scd-weights", create_if_missing=True)
 WEIGHTS_DIR = Path("/kaggle/working")
@@ -123,7 +103,6 @@ def download_competition_data(path: Path, recreate: bool = False):
 external_data_mapping = {
     "2020": {"id": 70, "path": INPUT_DIR / "isic-2020-challenge"},
     "2019": {"id": 65, "path": INPUT_DIR / "isic-2019-challenge"},
-    "2018": {"id": 66, "path": INPUT_DIR / "isic-2018-challenge"},
 }
 
 
@@ -219,14 +198,6 @@ def download_external_data(year: str, recreate: bool = False):
 
 @app.function(
     image=image,
-    mounts=[
-        pretrain_script_mount,
-        train_script_mount,
-        dataset_script_mount,
-        models_script_mount,
-        engine_script_mount,
-        utils_script_mount,
-    ],
     volumes={str(INPUT_DIR): input_volume},
     timeout=60 * 60 * 6,  # 6 hours
 )
@@ -239,21 +210,11 @@ def download_data(ext: str = "", recreate: bool = False):
         download_external_data("2020", recreate)
     if "2019" in ext:
         download_external_data("2019", recreate)
-    if "2018" in ext:
-        download_external_data("2018", recreate)
     input_volume.commit()
 
 
 @app.function(
     image=image,
-    mounts=[
-        pretrain_script_mount,
-        train_script_mount,
-        dataset_script_mount,
-        models_script_mount,
-        engine_script_mount,
-        utils_script_mount,
-    ],
     volumes={str(INPUT_DIR): input_volume},
     timeout=60 * 60,  # 1 hour
 )
@@ -299,32 +260,32 @@ def upload_external_data(year: str):
     print(f"External data for {year} uploaded to Kaggle ✅")
 
 
+def mount_folder(folder_name: str):
+    script_local_path = Path(__file__).parent / folder_name
+    script_remote_path = Path(f"/root/")
+    return Mount.from_local_dir(local_path=script_local_path, remote_path=script_remote_path)
+
+
 @dataclass
 class Config:
     mixed_precision: bool = "fp16"
     image_size: int = 64
-    batch_size: int = 64
+    train_batch_size: int = 64
+    val_batch_size: int = 512
     num_workers: int = 8
     init_lr: float = 3e-5
-    num_epochs: int = 15
-    n_tta: int = 6
+    num_epochs: int = 20
+    n_tta: int = 8
     seed: int = 2022
 
-    ext: str = "2020,2019,2018"
+    ext: str = "2020,2019"
     only_malignant: bool = True
     debug: bool = False
 
 
 @app.function(
     image=image,
-    mounts=[
-        pretrain_script_mount,
-        train_script_mount,
-        dataset_script_mount,
-        models_script_mount,
-        engine_script_mount,
-        utils_script_mount,
-    ],
+    mounts=[mount_folder("train")],
     volumes={str(INPUT_DIR): input_volume, str(WEIGHTS_DIR): weights_volume},
     gpu=GPU_CONFIG,
     timeout=60 * 60 * 24,  # 24 hours
@@ -374,10 +335,6 @@ def train(model_name: str, version: str, fold: int):
         data_2019_dir = external_data_mapping["2019"]["path"]
     else:
         data_2019_dir = ""
-    if "2018" in config.ext:
-        data_2018_dir = external_data_mapping["2018"]["path"]
-    else:
-        data_2018_dir = ""
 
     write_basic_config(mixed_precision=config.mixed_precision)
     print("Launching training script")
@@ -385,7 +342,7 @@ def train(model_name: str, version: str, fold: int):
         [
             "accelerate",
             "launch",
-            pretrain_script_filename,
+            "run.py",
             f"--model_identifier={model_identifier}",
             f"--model_name={model_name}",
             f"--model_dir={model_dir}",
@@ -393,7 +350,6 @@ def train(model_name: str, version: str, fold: int):
         ]
         + ([f"--data_2020_dir={data_2020_dir}"] if data_2020_dir else [])
         + ([f"--data_2019_dir={data_2019_dir}"] if data_2019_dir else [])
-        + ([f"--data_2018_dir={data_2018_dir}"] if data_2018_dir else [])
         + [
             f"--fold={fold}",
         ]
@@ -401,7 +357,8 @@ def train(model_name: str, version: str, fold: int):
         + [
             f"--mixed_precision={config.mixed_precision}",
             f"--image_size={config.image_size}",
-            f"--batch_size={config.batch_size}",
+            f"--train_batch_size={config.train_batch_size}",
+            f"--val_batch_size={config.val_batch_size}",
             f"--num_workers={config.num_workers}",
             f"--init_lr={config.init_lr}",
             f"--num_epochs={config.num_epochs}",
@@ -417,14 +374,7 @@ def train(model_name: str, version: str, fold: int):
 
 @app.function(
     image=image,
-    mounts=[
-        pretrain_script_mount,
-        train_script_mount,
-        dataset_script_mount,
-        models_script_mount,
-        engine_script_mount,
-        utils_script_mount,
-    ],
+    mounts=[mount_folder("train")],
     volumes={str(WEIGHTS_DIR): weights_volume},
     timeout=60 * 60,  # 1 hour
 )
@@ -445,20 +395,24 @@ def upload_weights(model_name: str, version: str):
     model_dir = Path(WEIGHTS_DIR) / model_identifier
 
     oof_preds_fold_filepaths = glob(
-        str(model_dir / f"oof_preds_{model_name}_{version}_fold_*.csv")
+        str(model_dir / f"oof_preds_{model_identifier}_fold_*.csv")
     )
     oof_preds_df = pd.concat(
         [pd.read_csv(filepath) for filepath in oof_preds_fold_filepaths],
         ignore_index=True,
     )
     oof_preds_df.to_csv(
-        model_dir / f"oof_preds_{model_name}_{version}.csv", index=False
+        model_dir / f"oof_preds_{model_identifier}.csv", index=False
     )
 
     all_folds = np.unique(oof_preds_df["fold"])
     val_auc_scores = {}
     val_pauc_scores = {}
     best_num_epochs = {}
+    train_epoch_losses = {}
+    val_epoch_losses = {}
+    val_epoch_paucs = {}
+    val_epoch_aucs = {}
     for fold in all_folds:
         val_index = oof_preds_df[oof_preds_df["fold"] == fold].index
 
@@ -475,6 +429,10 @@ def upload_weights(model_name: str, version: str):
         with open(model_dir / f"models/fold_{fold}/metadata.json", "r") as f:
             fold_metadata = json.load(f)
             best_num_epochs[f"fold_{fold}"] = fold_metadata["best_epoch"]
+            train_epoch_losses[f"fold_{fold}"] = fold_metadata["train_losses"]
+            val_epoch_losses[f"fold_{fold}"] = fold_metadata["val_losses"]
+            val_epoch_paucs[f"fold_{fold}"] = fold_metadata["val_paucs"]
+            val_epoch_aucs[f"fold_{fold}"] = fold_metadata["val_aucs"]
         assert np.allclose(
             val_pauc_scores[f"fold_{fold}"], fold_metadata["best_val_pauc"]
         )
@@ -513,6 +471,10 @@ def upload_weights(model_name: str, version: str):
         "cv_pauc_avg": cv_pauc_avg,
         "cv_auc_std": cv_auc_std,
         "cv_pauc_std": cv_pauc_std,
+        "train_epoch_losses": train_epoch_losses,
+        "val_epoch_losses": val_epoch_losses,
+        "val_epoch_paucs": val_epoch_paucs,
+        "val_epoch_aucs": val_epoch_aucs,
     }
 
     with open(model_dir / f"{model_identifier}_run_metadata.json", "r") as f:
@@ -520,6 +482,11 @@ def upload_weights(model_name: str, version: str):
         metadata = {**metadata, **metrics_metadata}
     with open(model_dir / f"{model_identifier}_run_metadata.json", "w") as f:
         json.dump(metadata, f)
+
+    shutil.copy("models.py", model_dir)
+    shutil.copy("dataset.py", model_dir)
+    shutil.copy("engine.py", model_dir)
+    shutil.copy("utils.py", model_dir)
 
     subprocess.run(f"kaggle datasets init -p {model_dir}", shell=True, check=True)
     with open(model_dir / "dataset-metadata.json", "r") as f:

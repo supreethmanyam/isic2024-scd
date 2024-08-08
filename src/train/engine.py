@@ -16,11 +16,11 @@ def train_epoch(
     model.train()
     train_loss = []
     total_steps = len(dev_dataloader)
-    for step, (images, labels, index) in enumerate(dev_dataloader):
+    for step, (images, targets) in enumerate(dev_dataloader):
         optimizer.zero_grad()
         logits = model(images)
         probs = torch.sigmoid(logits)
-        loss = criterion(probs, labels.unsqueeze(1))
+        loss = criterion(probs, targets.unsqueeze(1))
         accelerator.backward(loss)
         optimizer.step()
         lr_scheduler.step()
@@ -61,15 +61,15 @@ def val_epoch(
     val_dataloader,
     accelerator,
     n_tta,
-    log_interval=100,
+    log_interval=10,
 ):
     model.eval()
     val_probs = []
-    val_labels = []
+    val_targets = []
     val_loss = []
     total_steps = len(val_dataloader)
     with torch.no_grad():
-        for step, (images, labels, index) in enumerate(val_dataloader):
+        for step, (images, targets) in enumerate(val_dataloader):
             logits = 0
             probs = 0
             for i in range(n_tta):
@@ -79,26 +79,53 @@ def val_epoch(
             logits /= n_tta
             probs /= n_tta
 
-            labels = labels.unsqueeze(1)
-            loss = criterion(probs, labels)
+            targets = targets.unsqueeze(1)
+            loss = criterion(probs, targets)
             val_loss.append(loss.detach().cpu().numpy())
 
-            probs, labels = accelerator.gather((probs, labels))
+            probs, targets = accelerator.gather((probs, targets))
             val_probs.append(probs)
-            val_labels.append(labels)
+            val_targets.append(targets)
 
             if (step == 0) or ((step + 1) % log_interval == 0):
                 logger.info(f"Epoch: {epoch} | Step: {step + 1}/{total_steps}")
 
     val_loss = np.mean(val_loss)
     val_probs = torch.cat(val_probs).cpu().numpy()
-    val_labels = torch.cat(val_labels).cpu().numpy()
-    val_auc = compute_auc(val_labels, val_probs)
-    val_pauc = compute_pauc(val_labels, val_probs, min_tpr=0.8)
+    val_targets = torch.cat(val_targets).cpu().numpy()
+    val_auc = compute_auc(val_targets, val_probs)
+    val_pauc = compute_pauc(val_targets, val_probs, min_tpr=0.8)
     return (
         val_loss,
         val_auc,
         val_pauc,
         val_probs,
-        val_labels
+        val_targets,
     )
+
+
+def predict(model, test_dataloader, accelerator, n_tta, log_interval=10):
+    model.eval()
+    test_probs = []
+    total_steps = len(test_dataloader)
+    with torch.no_grad():
+        for step, images in enumerate(test_dataloader):
+            logits = 0
+            probs = 0
+            for i in range(n_tta):
+                logits_iter = model(get_trans(images, i))
+                logits += logits_iter
+                probs += torch.sigmoid(logits_iter)
+            logits /= n_tta
+            probs /= n_tta
+
+            probs = accelerator.gather(probs)
+            test_probs.append(probs)
+
+            if (step == 0) or ((step + 1) % log_interval == 0):
+                print(
+                    f"Step: {step + 1}/{total_steps}"
+                )
+
+    test_probs = torch.cat(test_probs).cpu().numpy()
+    return test_probs
