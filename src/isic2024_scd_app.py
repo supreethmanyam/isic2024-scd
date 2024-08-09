@@ -275,7 +275,7 @@ class Config:
     train_batch_size: int = 64
     val_batch_size: int = 512
     num_workers: int = 8
-    init_lr: float = 3e-4
+    init_lr: float = 3e-5
     num_epochs: int = 20
     n_tta: int = 8
     seed: int = 2022
