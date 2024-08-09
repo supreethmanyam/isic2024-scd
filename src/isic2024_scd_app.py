@@ -278,7 +278,7 @@ class Config:
     num_epochs: int = 20
     n_tta: int = 8
     seed: int = 2022
-    weighted_sampling: bool = False
+    weighted_sampling: bool = True
 
     ext: str = "2020,2019"
     only_malignant: bool = False
