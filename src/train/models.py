@@ -1,7 +1,7 @@
 import torch.nn as nn
 import torch.nn.functional as F
-from timm import create_model
 from dataset import all_labels
+from timm import create_model
 
 
 class ISICNet(nn.Module):

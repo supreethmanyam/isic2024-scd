@@ -7,7 +7,6 @@ from typing import Tuple
 
 from modal import App, Image, Mount, Secret, Volume
 
-
 GPU_CONFIG = os.environ.get("GPU_CONFIG", "a10g:1")
 app = App(name="isic2024-scd", secrets=[Secret.from_name("kaggle-api-token")])
 image = Image.debian_slim(python_version="3.10").poetry_install_from_file(
@@ -263,7 +262,9 @@ def upload_external_data(year: str):
 def mount_folder(folder_name: str):
     script_local_path = Path(__file__).parent / folder_name
     script_remote_path = Path(f"/root/")
-    return Mount.from_local_dir(local_path=script_local_path, remote_path=script_remote_path)
+    return Mount.from_local_dir(
+        local_path=script_local_path, remote_path=script_remote_path
+    )
 
 
 @dataclass
@@ -274,11 +275,10 @@ class Config:
     train_batch_size: int = 64
     val_batch_size: int = 512
     num_workers: int = 8
-    init_lr: float = 3e-5
+    init_lr: float = 3e-4
     num_epochs: int = 20
     n_tta: int = 8
     seed: int = 2022
-    weighted_sampling: bool = True
 
     ext: str = "2020,2019"
     only_malignant: bool = False
@@ -319,9 +319,7 @@ def train(model_name: str, version: str, fold: int):
     config = Config()
     print(f"Running with config:")
     pprint(config.__dict__)
-    metadata = {
-        "params": config.__dict__
-    }
+    metadata = {"params": config.__dict__}
     model_identifier = f"{model_name}_{version}"
     model_dir = Path(WEIGHTS_DIR) / model_identifier
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -356,7 +354,6 @@ def train(model_name: str, version: str, fold: int):
             f"--fold={fold}",
         ]
         + (["--only_malignant"] if config.only_malignant else [])
-        + (["--weighted_sampling"] if config.weighted_sampling else [])
         + [
             f"--target_mode={config.target_mode}",
             f"--mixed_precision={config.mixed_precision}",
@@ -405,9 +402,7 @@ def upload_weights(model_name: str, version: str):
         [pd.read_csv(filepath) for filepath in oof_preds_fold_filepaths],
         ignore_index=True,
     )
-    oof_preds_df.to_csv(
-        model_dir / f"oof_preds_{model_identifier}.csv", index=False
-    )
+    oof_preds_df.to_csv(model_dir / f"oof_preds_{model_identifier}.csv", index=False)
 
     all_folds = np.unique(oof_preds_df["fold"])
     val_auc_scores = {}

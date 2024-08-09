@@ -1,7 +1,7 @@
-import torch
 import numpy as np
-from utils import compute_auc, compute_pauc, logger
+import torch
 from dataset import all_labels, malignant_idx
+from utils import compute_auc, compute_pauc, logger
 
 
 def train_epoch(
@@ -120,9 +120,11 @@ def val_epoch(
     val_targets = torch.cat(val_targets).cpu().numpy()
     if target_mode == "multi":
         val_probs = val_probs[:, malignant_idx].sum(1)
-        val_targets = ((val_targets == malignant_idx[0]) |
-                       (val_targets == malignant_idx[1]) |
-                       (val_targets == malignant_idx[2]))
+        val_targets = (
+            (val_targets == malignant_idx[0])
+            | (val_targets == malignant_idx[1])
+            | (val_targets == malignant_idx[2])
+        )
     val_auc = compute_auc(val_targets, val_probs)
     val_pauc = compute_pauc(val_targets, val_probs, min_tpr=0.8)
     return (
@@ -164,9 +166,7 @@ def predict(model, test_dataloader, accelerator, n_tta, target_mode, log_interva
             test_probs.append(probs)
 
             if (step == 0) or ((step + 1) % log_interval == 0):
-                print(
-                    f"Step: {step + 1}/{total_steps}"
-                )
+                print(f"Step: {step + 1}/{total_steps}")
 
     test_probs = torch.cat(test_probs).cpu().numpy()
     if target_mode == "multi":

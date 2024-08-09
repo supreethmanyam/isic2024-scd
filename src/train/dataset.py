@@ -78,9 +78,11 @@ multi_target_mapping_dict = {
         "solar lentigo": "BKL",
     },
 }
-all_labels = np.unique(list(multi_target_mapping_dict["2024"].values()) +
-                       list(multi_target_mapping_dict["2020"].values()) +
-                       list(multi_target_mapping_dict["2019"].values()))
+all_labels = np.unique(
+    list(multi_target_mapping_dict["2024"].values())
+    + list(multi_target_mapping_dict["2020"].values())
+    + list(multi_target_mapping_dict["2019"].values())
+)
 label2idx = {label: idx for idx, label in enumerate(all_labels)}
 malignant_labels = ["BCC", "MEL", "SCC"]
 malignant_idx = [label2idx[label] for label in malignant_labels]
@@ -185,7 +187,9 @@ def get_data(data_dir, data_2020_dir, data_2019_dir, target_mode, only_malignant
         train_metadata["label"] = train_metadata["target"]
     elif target_mode == "multi":
         train_metadata["label"] = train_metadata["iddx_3"].fillna("unknown")
-        train_metadata["label"] = train_metadata["label"].replace(multi_target_mapping_dict["2024"])
+        train_metadata["label"] = train_metadata["label"].replace(
+            multi_target_mapping_dict["2024"]
+        )
         train_metadata["label"] = train_metadata["label"].map(label2idx)
     else:
         raise ValueError(f"Invalid target_mode: {target_mode}")
@@ -204,9 +208,13 @@ def get_data(data_dir, data_2020_dir, data_2019_dir, target_mode, only_malignant
                     train_metadata_2020["label"] == 1
                 ].reset_index(drop=True)
         elif target_mode == "multi":
-            train_metadata_2020["label"] = train_metadata_2020["diagnosis"].fillna("unknown")
-            train_metadata_2020['label'] = train_metadata_2020["label"].replace(multi_target_mapping_dict["2020"])
-            train_metadata_2020['label'] = train_metadata_2020['label'].map(label2idx)
+            train_metadata_2020["label"] = train_metadata_2020["diagnosis"].fillna(
+                "unknown"
+            )
+            train_metadata_2020["label"] = train_metadata_2020["label"].replace(
+                multi_target_mapping_dict["2020"]
+            )
+            train_metadata_2020["label"] = train_metadata_2020["label"].map(label2idx)
             if only_malignant:
                 train_metadata_2020 = train_metadata_2020[
                     train_metadata_2020["label"].isin(malignant_idx)
@@ -231,8 +239,10 @@ def get_data(data_dir, data_2020_dir, data_2019_dir, target_mode, only_malignant
                     train_metadata_2019["label"] == 1
                 ].reset_index(drop=True)
         elif target_mode == "multi":
-            train_metadata_2019['label'] = train_metadata_2019["diagnosis"].replace(multi_target_mapping_dict["2019"])
-            train_metadata_2019['label'] = train_metadata_2019['label'].map(label2idx)
+            train_metadata_2019["label"] = train_metadata_2019["diagnosis"].replace(
+                multi_target_mapping_dict["2019"]
+            )
+            train_metadata_2019["label"] = train_metadata_2019["label"].map(label2idx)
             if only_malignant:
                 train_metadata_2019 = train_metadata_2019[
                     train_metadata_2019["label"].isin(malignant_idx)

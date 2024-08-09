@@ -1,6 +1,6 @@
 import numpy as np
-from sklearn.metrics import auc, roc_auc_score, roc_curve
 from accelerate.logging import get_logger
+from sklearn.metrics import auc, roc_auc_score, roc_curve
 
 logger = get_logger(__name__)
 
