@@ -21,9 +21,10 @@ from dataset import (
     val_augment,
 )
 from models import ISICNet
-from torch.utils.data import DataLoader, RandomSampler
+from torch.utils.data import DataLoader, RandomSampler, WeightedRandomSampler
 from engine import train_epoch, val_epoch
 from utils import logger
+from dataset import all_labels, malignant_idx
 
 
 def parse_args(input_args=None):
@@ -77,7 +78,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--fold", type=int, default=None, required=True, help="Fold number."
     )
-    parser.add_argument("--only_malignant", action="store_true", default=True,
+    parser.add_argument("--only_malignant", action="store_true", default=False,
                         help="Use only malignant samples from external data.")
     parser.add_argument("--target_mode", type=str, required=True, choices=["binary", "multi"],)
     parser.add_argument(
@@ -106,6 +107,9 @@ def parse_args(input_args=None):
     )
     parser.add_argument(
         "--num_workers", type=int, default=4, help="Number of workers for dataloader."
+    )
+    parser.add_argument(
+        "--weighted_sampling", action="store_true", default=False, help="Use weighted sampler."
     )
     parser.add_argument(
         "--init_lr",
@@ -238,7 +242,122 @@ def main(args):
             logger.info(f"Using {train_metadata_2020.shape[0]} 2020 samples")
             logger.info(f"Using {train_metadata_2019.shape[0]} 2019 samples")
 
-    sampler = RandomSampler(dev_dataset)
+    if args.weighted_sampling:
+        logger.info("Using weighted sampler")
+        train_metadata["strength"] = np.where(
+            train_metadata["lesion_id"].notnull(), "strong", "weak"
+        )
+        if args.target_mode == "binary":
+            train_metadata.loc[
+                train_metadata["label"] == 1, "sample_weight"
+            ] = 10
+            train_metadata.loc[
+                (train_metadata["label"] == 0, "sample_weight") & (train_metadata["strength"] == "strong"),
+                "sample_weight",
+            ] = 0.6
+            train_metadata.loc[
+                (train_metadata["label"] == 0, "sample_weight") & (train_metadata["strength"] == "weak"),
+                "sample_weight",
+            ] = 0.4
+        elif args.target_mode == "multi":
+            train_metadata.loc[
+                train_metadata["label"].isin(malignant_idx), "sample_weight"
+            ] = 10
+            train_metadata.loc[
+                ~train_metadata["label"].isin(malignant_idx)
+                & (train_metadata["strength"] == "strong"),
+                "sample_weight",
+            ] = 0.6
+            train_metadata.loc[
+                ~train_metadata["label"].isin(malignant_idx)
+                & (train_metadata["strength"] == "weak"),
+                "sample_weight",
+            ] = 0.4
+        else:
+            raise ValueError(f"Invalid target mode : {args.target_mode}")
+        sample_weights = train_metadata["sample_weight"].values.tolist()
+
+        if not train_metadata_2020.empty:
+            train_metadata_2020["strength"] = np.where(
+                train_metadata_2020["diagnosis_confirm_type"] == "histopathology",
+                "strong",
+                "weak",
+            )
+            if args.target_mode == "binary":
+                train_metadata_2020.loc[
+                    train_metadata_2020["label"] == 1, "sample_weight"
+                ] = 10
+                train_metadata_2020.loc[
+                    (train_metadata_2020["label"] == 0, "sample_weight")
+                    & (train_metadata_2020["strength"] == "strong"),
+                    "sample_weight",
+                ] = 0.6
+                train_metadata_2020.loc[
+                    (train_metadata_2020["label"] == 0, "sample_weight")
+                    & (train_metadata_2020["strength"] == "weak"),
+                    "sample_weight",
+                ] = 0.4
+            elif args.target_mode == "multi":
+                train_metadata_2020.loc[
+                    train_metadata_2020["label"].isin(malignant_idx), "sample_weight"
+                ] = 10
+                train_metadata_2020.loc[
+                    ~train_metadata_2020["label"].isin(malignant_idx)
+                    & (train_metadata_2020["strength"] == "strong"),
+                    "sample_weight",
+                ] = 0.6
+                train_metadata_2020.loc[
+                    ~train_metadata_2020["label"].isin(malignant_idx)
+                    & (train_metadata_2020["strength"] == "weak"),
+                    "sample_weight",
+                ] = 0.4
+            else:
+                raise ValueError(f"Invalid target mode : {args.target_mode}")
+            sample_weights += train_metadata_2020["sample_weight"].values.tolist()
+
+        if not train_metadata_2019.empty:
+            train_metadata_2019["strength"] = np.where(
+                train_metadata_2019["diagnosis_confirm_type"] == "histopathology",
+                "strong",
+                "weak",
+            )
+            if args.target_mode == "binary":
+                train_metadata_2019.loc[
+                    train_metadata_2019["label"] == 1, "sample_weight"
+                ] = 10
+                train_metadata_2019.loc[
+                    (train_metadata_2019["label"] == 0, "sample_weight")
+                    & (train_metadata_2019["strength"] == "strong"),
+                    "sample_weight",
+                ] = 0.6
+                train_metadata_2019.loc[
+                    (train_metadata_2019["label"] == 0, "sample_weight")
+                    & (train_metadata_2019["strength"] == "weak"),
+                    "sample_weight",
+                ] = 0.4
+            elif args.target_mode == "multi":
+                train_metadata_2019.loc[
+                    train_metadata_2019["label"].isin(malignant_idx), "sample_weight"
+                ] = 10
+                train_metadata_2019.loc[
+                    ~train_metadata_2019["label"].isin(malignant_idx)
+                    & (train_metadata_2019["strength"] == "strong"),
+                    "sample_weight",
+                ] = 0.6
+                train_metadata_2019.loc[
+                    ~train_metadata_2019["label"].isin(malignant_idx)
+                    & (train_metadata_2019["strength"] == "weak"),
+                    "sample_weight",
+                ] = 0.4
+            else:
+                raise ValueError(f"Invalid target mode : {args.target_mode}")
+            sample_weights += train_metadata_2019["sample_weight"].values.tolist()
+        sampler = WeightedRandomSampler(
+            weights=sample_weights, num_samples=len(sample_weights), replacement=True
+        )
+    else:
+        logger.info("Using random sampler")
+        sampler = RandomSampler(dev_dataset)
 
     dev_dataloader = DataLoader(
         dev_dataset,
@@ -255,6 +374,8 @@ def main(args):
         drop_last=False,
         pin_memory=True,
     )
+    logger.info(f"Training in {args.target_mode} mode")
+    logger.info(f"Building with {len(all_labels)} classes")
     model = ISICNet(
         model_name=args.model_name,
         target_mode=args.target_mode,
@@ -265,6 +386,8 @@ def main(args):
         criterion = nn.BCELoss()
     elif args.target_mode == "multi":
         criterion = nn.CrossEntropyLoss()
+    else:
+        raise ValueError(f"Invalid target mode : {args.target_mode}")
     optimizer = torch.optim.Adam(model.parameters(), lr=args.init_lr)
     lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,

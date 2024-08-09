@@ -278,9 +278,10 @@ class Config:
     num_epochs: int = 20
     n_tta: int = 8
     seed: int = 2022
+    weighted_sampling: bool = True
 
     ext: str = "2020,2019"
-    only_malignant: bool = True
+    only_malignant: bool = False
     debug: bool = False
 
 
@@ -355,6 +356,7 @@ def train(model_name: str, version: str, fold: int):
             f"--fold={fold}",
         ]
         + (["--only_malignant"] if config.only_malignant else [])
+        + (["--weighted_sampling"] if config.weighted_sampling else [])
         + [
             f"--target_mode={config.target_mode}",
             f"--mixed_precision={config.mixed_precision}",
