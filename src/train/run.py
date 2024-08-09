@@ -241,41 +241,45 @@ def main(args):
             logger.info("Using only malignant data")
             logger.info(f"Using {train_metadata_2020.shape[0]} 2020 samples")
             logger.info(f"Using {train_metadata_2019.shape[0]} 2019 samples")
+        else:
+            logger.info("Using all data")
+            logger.info(f"Using {train_metadata_2020.shape[0]} 2020 samples")
+            logger.info(f"Using {train_metadata_2019.shape[0]} 2019 samples")
 
     if args.weighted_sampling:
         logger.info("Using weighted sampler")
-        train_metadata["strength"] = np.where(
-            train_metadata["lesion_id"].notnull(), "strong", "weak"
+        dev_metadata["strength"] = np.where(
+            dev_metadata["lesion_id"].notnull(), "strong", "weak"
         )
         if args.target_mode == "binary":
-            train_metadata.loc[
-                train_metadata["label"] == 1, "sample_weight"
+            dev_metadata.loc[
+                dev_metadata["label"] == 1, "sample_weight"
             ] = 10
-            train_metadata.loc[
-                (train_metadata["label"] == 0, "sample_weight") & (train_metadata["strength"] == "strong"),
+            dev_metadata.loc[
+                (dev_metadata["label"] == 0, "sample_weight") & (dev_metadata["strength"] == "strong"),
                 "sample_weight",
             ] = 0.6
-            train_metadata.loc[
-                (train_metadata["label"] == 0, "sample_weight") & (train_metadata["strength"] == "weak"),
+            dev_metadata.loc[
+                (dev_metadata["label"] == 0, "sample_weight") & (dev_metadata["strength"] == "weak"),
                 "sample_weight",
             ] = 0.4
         elif args.target_mode == "multi":
-            train_metadata.loc[
-                train_metadata["label"].isin(malignant_idx), "sample_weight"
+            dev_metadata.loc[
+                dev_metadata["label"].isin(malignant_idx), "sample_weight"
             ] = 10
-            train_metadata.loc[
-                ~train_metadata["label"].isin(malignant_idx)
-                & (train_metadata["strength"] == "strong"),
+            dev_metadata.loc[
+                ~dev_metadata["label"].isin(malignant_idx)
+                & (dev_metadata["strength"] == "strong"),
                 "sample_weight",
             ] = 0.6
-            train_metadata.loc[
-                ~train_metadata["label"].isin(malignant_idx)
-                & (train_metadata["strength"] == "weak"),
+            dev_metadata.loc[
+                ~dev_metadata["label"].isin(malignant_idx)
+                & (dev_metadata["strength"] == "weak"),
                 "sample_weight",
             ] = 0.4
         else:
             raise ValueError(f"Invalid target mode : {args.target_mode}")
-        sample_weights = train_metadata["sample_weight"].values.tolist()
+        sample_weights = dev_metadata["sample_weight"].values.tolist()
 
         if not train_metadata_2020.empty:
             train_metadata_2020["strength"] = np.where(
@@ -352,8 +356,9 @@ def main(args):
             else:
                 raise ValueError(f"Invalid target mode : {args.target_mode}")
             sample_weights += train_metadata_2019["sample_weight"].values.tolist()
+        assert len(sample_weights) == len(dev_dataset)
         sampler = WeightedRandomSampler(
-            weights=sample_weights, num_samples=len(sample_weights), replacement=True
+            weights=sample_weights, num_samples=len(dev_dataset), replacement=True
         )
     else:
         logger.info("Using random sampler")
