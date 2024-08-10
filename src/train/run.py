@@ -202,16 +202,23 @@ def main(args):
     dev_metadata = train_metadata.loc[dev_index, :].reset_index(drop=True)
     val_metadata = train_metadata.loc[val_index, :].reset_index(drop=True)
 
+    if "medvit" in args.model_name.lower():
+        mean = (0.5, 0.5, 0.5)
+        std = (0.5, 0.5, 0.5)
+    else:
+        mean = None
+        std = None
+
     dev_dataset = ISICDataset(
         dev_metadata,
         train_images,
-        augment=dev_augment(args.image_size),
+        augment=dev_augment(args.image_size, mean=mean, std=std),
         infer=False,
     )
     val_dataset = ISICDataset(
         val_metadata,
         train_images,
-        augment=val_augment(args.image_size),
+        augment=val_augment(args.image_size, mean=mean, std=std),
         infer=False,
     )
 
@@ -224,7 +231,7 @@ def main(args):
         train_dataset_2020 = ISICDataset(
             train_metadata_2020,
             train_images_2020,
-            augment=dev_augment(args.image_size),
+            augment=dev_augment(args.image_size, mean=mean, std=std),
             infer=False,
         )
         dev_dataset = torch.utils.data.ConcatDataset([dev_dataset, train_dataset_2020])
@@ -237,7 +244,7 @@ def main(args):
         train_dataset_2019 = ISICDataset(
             train_metadata_2019,
             train_images_2019,
-            augment=dev_augment(args.image_size),
+            augment=dev_augment(args.image_size, mean=mean, std=std),
             infer=False,
         )
         dev_dataset = torch.utils.data.ConcatDataset([dev_dataset, train_dataset_2019])

@@ -88,7 +88,11 @@ malignant_labels = ["BCC", "MEL", "SCC"]
 malignant_idx = [label2idx[label] for label in malignant_labels]
 
 
-def dev_augment(image_size):
+def dev_augment(image_size, mean=None, std=None):
+    if mean is not None and std is not None:
+        normalize = A.Normalize(mean=mean, std=std, max_pixel_value=255.0, p=1.0)
+    else:
+        normalize = A.Normalize(max_pixel_value=255.0, p=1.0)
     transform = A.Compose(
         [
             A.Transpose(p=0.5),
@@ -129,7 +133,7 @@ def dev_augment(image_size):
                 min_holes=1,
                 p=0.7,
             ),
-            A.Normalize(),
+            normalize,
             ToTensorV2(),
         ],
         p=1.0,
@@ -137,16 +141,24 @@ def dev_augment(image_size):
     return transform
 
 
-def val_augment(image_size):
+def val_augment(image_size, mean=None, std=None):
+    if mean is not None and std is not None:
+        normalize = A.Normalize(mean=mean, std=std, max_pixel_value=255.0, p=1.0)
+    else:
+        normalize = A.Normalize(max_pixel_value=255.0, p=1.0)
     transform = A.Compose(
-        [A.Resize(image_size, image_size), A.Normalize(), ToTensorV2()], p=1.0
+        [A.Resize(image_size, image_size), normalize, ToTensorV2()], p=1.0
     )
     return transform
 
 
-def test_augment(image_size):
+def test_augment(image_size, mean=None, std=None):
+    if mean is not None and std is not None:
+        normalize = A.Normalize(mean=mean, std=std, max_pixel_value=255.0, p=1.0)
+    else:
+        normalize = A.Normalize(max_pixel_value=255.0, p=1.0)
     transform = A.Compose(
-        [A.Resize(image_size, image_size), A.Normalize(), ToTensorV2()], p=1.0
+        [A.Resize(image_size, image_size), normalize, ToTensorV2()], p=1.0
     )
     return transform
 
