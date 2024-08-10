@@ -195,29 +195,6 @@ def download_external_data(year: str, recreate: bool = False):
         print(f"Downloaded external dataset {year} from kaggle ✅")
 
 
-def download_model_weights():
-    import subprocess
-
-    path = INPUT_DIR / "model-weights"
-    path.mkdir(parents=True, exist_ok=True)
-    required_files = [
-        "MedViT_base_im1k.pth",
-    ]
-    existing_files = set(file.name for file in path.iterdir())
-    if len(existing_files) > 0 and set(required_files) <= existing_files:
-        print(f"Model weights are loaded ✅")
-    else:
-        # Download model weights
-        print(f"Downloading model weights...")
-        subprocess.run(
-            f"kaggle models instances versions download supreethmanyam/medvit/pyTorch/default/1 -p {path} --untar",
-            shell=True,
-            check=True,
-        )
-        input_volume.commit()
-        print("Downloaded model weights from kaggle ✅")
-
-
 @app.function(
     image=image,
     volumes={str(INPUT_DIR): input_volume},
@@ -228,7 +205,6 @@ def download_data(ext: str = "", recreate: bool = False):
     data_dir = INPUT_DIR / "isic-2024-challenge"
     data_dir.mkdir(parents=True, exist_ok=True)
     download_competition_data(data_dir)
-    download_model_weights()
     if "2020" in ext:
         download_external_data("2020", recreate)
     if "2019" in ext:
@@ -299,7 +275,7 @@ class Config:
     train_batch_size: int = 64
     val_batch_size: int = 512
     num_workers: int = 8
-    init_lr: float = 8e-5
+    init_lr: float = 3e-5
     num_epochs: int = 20
     n_tta: int = 8
     seed: int = 2022

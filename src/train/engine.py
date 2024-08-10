@@ -32,8 +32,6 @@ def train_epoch(
         else:
             raise ValueError(f"Invalid target_mode: {target_mode}")
         accelerator.backward(loss)
-        if "medvit" in model.model_name.lower():
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
         optimizer.step()
         lr_scheduler.step()
 

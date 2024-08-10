@@ -202,12 +202,8 @@ def main(args):
     dev_metadata = train_metadata.loc[dev_index, :].reset_index(drop=True)
     val_metadata = train_metadata.loc[val_index, :].reset_index(drop=True)
 
-    if "medvit" in args.model_name.lower():
-        mean = (0.5, 0.5, 0.5)
-        std = (0.5, 0.5, 0.5)
-    else:
-        mean = None
-        std = None
+    mean = None
+    std = None
 
     dev_dataset = ISICDataset(
         dev_metadata,
