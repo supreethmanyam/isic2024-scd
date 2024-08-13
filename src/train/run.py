@@ -25,6 +25,8 @@ from engine import train_epoch, val_epoch
 from models import ISICNet
 from torch.utils.data import DataLoader, RandomSampler
 from utils import logger
+from dataset import malignant_idx
+from imblearn.under_sampling import RandomUnderSampler
 
 
 def parse_args(input_args=None):
@@ -89,6 +91,9 @@ def parse_args(input_args=None):
         type=str,
         required=True,
         choices=["binary", "multi"],
+    )
+    parser.add_argument(
+        "--under_sample", action="store_true", default=False, help="Under sample data."
     )
     parser.add_argument(
         "--mixed_precision",
@@ -202,6 +207,14 @@ def main(args):
     dev_metadata = train_metadata.loc[dev_index, :].reset_index(drop=True)
     val_metadata = train_metadata.loc[val_index, :].reset_index(drop=True)
 
+    sampling_ratio = 0.01
+    if args.under_sample:
+        logger.info("Under sampling negative samples")
+        rus = RandomUnderSampler(sampling_strategy=sampling_ratio, random_state=args.seed)
+        dev_metadata, _ = rus.fit_resample(
+            dev_metadata, dev_metadata["target"]
+        )
+
     mean = None
     std = None
 
@@ -224,6 +237,14 @@ def main(args):
             train_metadata_2020 = train_metadata_2020.sample(
                 args.train_batch_size * 1
             ).reset_index(drop=True)
+        # if args.under_sample:
+        #     rus = RandomUnderSampler(sampling_strategy=sampling_ratio, random_state=args.seed)
+        #     train_metadata_2020.loc[train_metadata_2020["label"].isin(malignant_idx), "binary_label"] = 1
+        #     train_metadata_2020.loc[~train_metadata_2020["label"].isin(malignant_idx), "binary_label"] = 0
+        #     train_metadata_2020, _ = rus.fit_resample(
+        #         train_metadata_2020, train_metadata_2020["binary_label"]
+        #     )
+        #     train_metadata_2020 = train_metadata_2020.reset_index(drop=True)
         train_dataset_2020 = ISICDataset(
             train_metadata_2020,
             train_images_2020,
@@ -237,6 +258,14 @@ def main(args):
             train_metadata_2019 = train_metadata_2019.sample(
                 args.train_batch_size * 1
             ).reset_index(drop=True)
+        # if args.under_sample:
+        #     rus = RandomUnderSampler(sampling_strategy=sampling_ratio, random_state=args.seed)
+        #     train_metadata_2019.loc[train_metadata_2019["label"].isin(malignant_idx), "binary_label"] = 1
+        #     train_metadata_2019.loc[~train_metadata_2019["label"].isin(malignant_idx), "binary_label"] = 0
+        #     train_metadata_2019, _ = rus.fit_resample(
+        #         train_metadata_2019, train_metadata_2019["binary_label"]
+        #     )
+        #     train_metadata_2019 = train_metadata_2019.reset_index(drop=True)
         train_dataset_2019 = ISICDataset(
             train_metadata_2019,
             train_images_2019,
