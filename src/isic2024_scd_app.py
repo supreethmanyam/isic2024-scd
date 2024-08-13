@@ -282,7 +282,6 @@ class Config:
 
     ext: str = "2020,2019"
     only_malignant: bool = False
-    under_sample: bool = True
     debug: bool = False
 
 
@@ -355,7 +354,6 @@ def train(model_name: str, version: str, fold: int):
             f"--fold={fold}",
         ]
         + (["--only_malignant"] if config.only_malignant else [])
-        + (["--under_sample"] if config.under_sample else [])
         + [
             f"--target_mode={config.target_mode}",
             f"--mixed_precision={config.mixed_precision}",
