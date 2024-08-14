@@ -297,14 +297,20 @@ class PreTrainConfig:
 class FinetuneConfig:
     mixed_precision: bool = "fp16"
     image_size: int = 64
-    sampling_rate: float = 0.01
     train_batch_size: int = 64
     val_batch_size: int = 512
     num_workers: int = 8
-    init_lr: float = 3e-5
+    init_lr: float = 8e-5
     num_epochs: int = 20
     n_tta: int = 8
     seed: int = 2022
+
+    sampling_rate: float = 0.1
+    tau: float = 0.1
+    Lambda: float = 1.0
+    gamma0: float = 0.5
+    gamma1: float = 0.5
+    margin: float = 1.0
 
     debug: bool = False
 
@@ -467,6 +473,11 @@ def finetune(model_name: str, version: str, fold: int):
             f"--num_workers={config.num_workers}",
             f"--init_lr={config.init_lr}",
             f"--sampling_rate={config.sampling_rate}",
+            f"--tau={config.tau}",
+            f"--Lambda={config.Lambda}",
+            f"--gamma0={config.gamma0}",
+            f"--gamma1={config.gamma1}",
+            f"--margin={config.margin}",
             f"--num_epochs={config.num_epochs}",
             f"--n_tta={config.n_tta}",
             f"--seed={config.seed}",

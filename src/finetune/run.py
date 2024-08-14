@@ -21,8 +21,8 @@ from dataset import (
 from engine import train_epoch, val_epoch
 from models import ISICNet
 from libauc.sampler import DualSampler
-from libauc.losses.auc import pAUC_DRO_Loss
-from libauc.optimizers import SOPAs
+from libauc.losses.auc import tpAUC_KL_Loss
+from libauc.optimizers import SOTAs
 from torch.utils.data import DataLoader
 from safetensors import safe_open
 from utils import logger
@@ -116,16 +116,22 @@ def parse_args(input_args=None):
         help="Learning rate.",
     )
     parser.add_argument(
-        "--sampling_rate", type=float, default=0.01, help="Sampling rate for fine-tuning."
+        "--sampling_rate", type=float, help="Sampling rate for fine-tuning."
     )
     parser.add_argument(
-        "--gamma", type=float, required=False, default=0.1, help="Learning rate decay factor."
+        "--tau", type=float, help="Margin for the loss function."
     )
     parser.add_argument(
-        "--margin", type=float, required=False, default=0.6, help="Margin for the loss function."
+        "--Lambda", type=float, help="Lambda for the loss function."
     )
     parser.add_argument(
-        "--Lambda", type=float, required=False, default=1.0, help="Lambda for the loss function."
+        "--gamma0", type=float, help="Learning rate decay factor."
+    )
+    parser.add_argument(
+        "--gamma1", type=float, help="Learning rate decay factor."
+    )
+    parser.add_argument(
+        "--margin", type=float, help="Margin for the loss function."
     )
     parser.add_argument("--num_epochs", type=int, default=2, help="Number of epochs.")
     parser.add_argument(
@@ -192,6 +198,12 @@ def main(args):
     dev_metadata = train_metadata.loc[dev_index, :].reset_index(drop=True)
     val_metadata = train_metadata.loc[val_index, :].reset_index(drop=True)
 
+    pos_samples = dev_metadata[dev_metadata["target"] == 1]
+    neg_strong_samples = dev_metadata[(dev_metadata["target"] == 0) & (dev_metadata["lesion_id"].notnull())]
+    neg_weak_samples = dev_metadata[(dev_metadata["target"] == 0) & (dev_metadata["lesion_id"].isnull())]
+    neg_weak_samples = neg_weak_samples.sample(n=pos_samples.shape[0]*100, random_state=args.seed)
+    dev_metadata = pd.concat([pos_samples, neg_strong_samples, neg_weak_samples], axis=0).reset_index(drop=True)
+
     mean = None
     std = None
 
@@ -239,13 +251,16 @@ def main(args):
     _ = model.load_state_dict(tensors, strict=False)
     logger.info("Pretrained weights loaded successfully")
 
-    criterion = pAUC_DRO_Loss(data_len=len(dev_dataset), gamma=args.gamma, margin=args.margin, Lambda=args.Lambda)
-    optimizer = SOPAs(model.parameters(), lr=args.init_lr)
+    criterion = tpAUC_KL_Loss(data_len=len(dev_dataset),
+                              tau=args.tau, Lambda=args.Lambda,
+                              gammas=(args.gamma0, args.gamma1),
+                              margin=args.margin)
+    optimizer = SOTAs(model.parameters(), lr=args.init_lr)
     lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
         pct_start=1 / args.num_epochs,
-        max_lr=args.init_lr * 10,
-        div_factor=10,
+        max_lr=args.init_lr * 1,
+        div_factor=1,
         epochs=args.num_epochs,
         steps_per_epoch=len(dev_dataloader),
     )
