@@ -28,7 +28,7 @@ def train_epoch(
 
         loss_value = accelerator.gather(loss).item()
         train_loss.append(loss_value)
-        smooth_loss = sum(train_loss[-100:]) / min(len(train_loss), 100)
+        smooth_loss = sum(train_loss[-500:]) / min(len(train_loss), 500)
         if (step == 0) or ((step + 1) % log_interval == 0):
             logger.info(
                 f"Epoch: {epoch} | Step: {step + 1}/{total_steps} |"
@@ -58,7 +58,6 @@ def get_trans(img, iteration):
 def val_epoch(
     epoch,
     model,
-    criterion,
     val_dataloader,
     accelerator,
     n_tta,

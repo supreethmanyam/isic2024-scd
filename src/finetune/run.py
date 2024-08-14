@@ -302,7 +302,6 @@ def main(args):
         ) = val_epoch(
             epoch,
             model,
-            criterion,
             val_dataloader,
             accelerator,
             args.n_tta,
