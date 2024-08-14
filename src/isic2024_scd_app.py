@@ -279,7 +279,7 @@ def mount_folder(folder_name: str):
 class PreTrainConfig:
     target_mode: str = "multi"
     mixed_precision: bool = "fp16"
-    image_size: int = 64
+    image_size: int = 128
     train_batch_size: int = 64
     val_batch_size: int = 512
     num_workers: int = 8
