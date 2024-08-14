@@ -448,6 +448,17 @@ webencodings = "*"
 css = ["tinycss2 (>=1.1.0,<1.3)"]
 
 [[package]]
+name = "braceexpand"
+version = "0.1.7"
+description = "Bash-style brace expansion for Python"
+optional = false
+python-versions = "*"
+files = [
+    {file = "braceexpand-0.1.7-py2.py3-none-any.whl", hash = "sha256:91332d53de7828103dcae5773fb43bc34950b0c8160e35e0f44c4427a3b85014"},
+    {file = "braceexpand-0.1.7.tar.gz", hash = "sha256:e6e539bd20eaea53547472ff94f4fb5c3d3bf9d0a89388c4b56663aba765f705"},
+]
+
+[[package]]
 name = "certifi"
 version = "2024.7.4"
 description = "Python package for providing Mozilla's CA Bundle."
@@ -1970,6 +1981,42 @@ lint = ["pre-commit (==3.7.0)"]
 test = ["pytest (>=7.4)", "pytest-cov (>=4.1)"]
 
 [[package]]
+name = "libauc"
+version = "1.4.0"
+description = "LibAUC: A Deep Learning Library for X-Risk Optimization"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "libauc-1.4.0-py3-none-any.whl", hash = "sha256:6034f0943c775cbc4322af23aa922b36bc9789053e25aeab6c3cc9c2bfc1ce4b"},
+    {file = "libauc-1.4.0.tar.gz", hash = "sha256:aabede0f32d16eb8e1bd7491af6e45c0326fb488e7943c7a38f5932fd6c9d37f"},
+]
+
+[package.dependencies]
+numpy = "*"
+ogb = "*"
+opencv-python = "*"
+pandas = "*"
+Pillow = "*"
+scikit-learn = "*"
+scipy = "*"
+torch = "*"
+torch-geometric = "*"
+torchvision = "*"
+tqdm = "*"
+webdataset = "*"
+
+[[package]]
+name = "littleutils"
+version = "0.2.4"
+description = "Small personal collection of python utility functions"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "littleutils-0.2.4-py3-none-any.whl", hash = "sha256:d10d5fe2e107c49fe2fc2904a08d6e5a302b41f8405921835ffcc323782d5dbc"},
+    {file = "littleutils-0.2.4.tar.gz", hash = "sha256:c7835b01020ced42e291118b7d78fb16bc2d9a1b4f3f42f3cb3787bb4da53d19"},
+]
+
+[[package]]
 name = "markdown-it-py"
 version = "3.0.0"
 description = "Python port of markdown-it. Markdown parsing, done right!"
@@ -2601,6 +2648,49 @@ files = [
 ]
 
 [[package]]
+name = "ogb"
+version = "1.3.6"
+description = "Open Graph Benchmark"
+optional = false
+python-versions = "*"
+files = [
+    {file = "ogb-1.3.6-py3-none-any.whl", hash = "sha256:29ab84078c66a7846bf137c9be9545978616a053e734c032a2ff731d026bb5e9"},
+    {file = "ogb-1.3.6.tar.gz", hash = "sha256:ce90418a0e3206483187aa7b7ecac1a2c5d85b3b99aceedb807138ee43115914"},
+]
+
+[package.dependencies]
+numpy = ">=1.16.0"
+outdated = ">=0.2.0"
+pandas = ">=0.24.0"
+scikit-learn = ">=0.20.0"
+six = ">=1.12.0"
+torch = ">=1.6.0"
+tqdm = ">=4.29.0"
+urllib3 = ">=1.24.0"
+
+[[package]]
+name = "opencv-python"
+version = "4.10.0.84"
+description = "Wrapper package for OpenCV python bindings."
+optional = false
+python-versions = ">=3.6"
+files = [
+    {file = "opencv-python-4.10.0.84.tar.gz", hash = "sha256:72d234e4582e9658ffea8e9cae5b63d488ad06994ef12d81dc303b17472f3526"},
+    {file = "opencv_python-4.10.0.84-cp37-abi3-macosx_11_0_arm64.whl", hash = "sha256:fc182f8f4cda51b45f01c64e4cbedfc2f00aff799debebc305d8d0210c43f251"},
+    {file = "opencv_python-4.10.0.84-cp37-abi3-macosx_12_0_x86_64.whl", hash = "sha256:71e575744f1d23f79741450254660442785f45a0797212852ee5199ef12eed98"},
+    {file = "opencv_python-4.10.0.84-cp37-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:09a332b50488e2dda866a6c5573ee192fe3583239fb26ff2f7f9ceb0bc119ea6"},
+    {file = "opencv_python-4.10.0.84-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:9ace140fc6d647fbe1c692bcb2abce768973491222c067c131d80957c595b71f"},
+    {file = "opencv_python-4.10.0.84-cp37-abi3-win32.whl", hash = "sha256:2db02bb7e50b703f0a2d50c50ced72e95c574e1e5a0bb35a8a86d0b35c98c236"},
+    {file = "opencv_python-4.10.0.84-cp37-abi3-win_amd64.whl", hash = "sha256:32dbbd94c26f611dc5cc6979e6b7aa1f55a64d6b463cc1dcd3c95505a63e48fe"},
+]
+
+[package.dependencies]
+numpy = [
+    {version = ">=1.21.4", markers = "python_version >= \"3.10\" and platform_system == \"Darwin\""},
+    {version = ">=1.21.2", markers = "platform_system != \"Darwin\" and python_version >= \"3.10\""},
+]
+
+[[package]]
 name = "opencv-python-headless"
 version = "4.10.0.84"
 description = "Wrapper package for OpenCV python bindings."
@@ -2621,6 +2711,22 @@ numpy = [
     {version = ">=1.21.4", markers = "python_version >= \"3.10\" and platform_system == \"Darwin\""},
     {version = ">=1.21.2", markers = "platform_system != \"Darwin\" and python_version >= \"3.10\""},
 ]
+
+[[package]]
+name = "outdated"
+version = "0.2.2"
+description = "Check if a version of a PyPI package is outdated"
+optional = false
+python-versions = "*"
+files = [
+    {file = "outdated-0.2.2-py2.py3-none-any.whl", hash = "sha256:3e9c2ee6d17e86ae8cc7bb71d70c4172690121cda367155a30994742172678c8"},
+    {file = "outdated-0.2.2.tar.gz", hash = "sha256:4b7fdec88e36711120d096d485fc4d5035e4e5ffbd907cf3a6ce2af43058b970"},
+]
+
+[package.dependencies]
+littleutils = "*"
+requests = "*"
+setuptools = ">=44"
 
 [[package]]
 name = "overrides"
@@ -3130,6 +3236,20 @@ files = [
 
 [package.extras]
 windows-terminal = ["colorama (>=0.4.6)"]
+
+[[package]]
+name = "pyparsing"
+version = "3.1.2"
+description = "pyparsing module - Classes and methods to define and execute parsing grammars"
+optional = false
+python-versions = ">=3.6.8"
+files = [
+    {file = "pyparsing-3.1.2-py3-none-any.whl", hash = "sha256:f9db75911801ed778fe61bb643079ff86601aca99fcae6345aa67292038fb742"},
+    {file = "pyparsing-3.1.2.tar.gz", hash = "sha256:a1bac0ce561155ecc3ed78ca94d3c9378656ad4c94c1270de543f621420f94ad"},
+]
+
+[package.extras]
+diagrams = ["jinja2", "railroad-diagrams"]
 
 [[package]]
 name = "python-dateutil"
@@ -4367,6 +4487,37 @@ opt-einsum = ["opt-einsum (>=3.3)"]
 optree = ["optree (>=0.11.0)"]
 
 [[package]]
+name = "torch-geometric"
+version = "2.5.3"
+description = "Graph Neural Network Library for PyTorch"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "torch_geometric-2.5.3-py3-none-any.whl", hash = "sha256:8277abfc12600b0e8047e0c3ea2d55cc43f08c1448e73e924de827c15d0b5f85"},
+    {file = "torch_geometric-2.5.3.tar.gz", hash = "sha256:ad0761650c8fa56cdc46ee61c564fd4995f07f079965fe732b3a76d109fd3edc"},
+]
+
+[package.dependencies]
+aiohttp = "*"
+fsspec = "*"
+jinja2 = "*"
+numpy = "*"
+psutil = ">=5.8.0"
+pyparsing = "*"
+requests = "*"
+scikit-learn = "*"
+scipy = "*"
+tqdm = "*"
+
+[package.extras]
+benchmark = ["matplotlib", "networkx", "pandas", "protobuf (<4.21)", "wandb"]
+dev = ["pre-commit", "torch_geometric[test]"]
+full = ["ase", "captum (<0.7.0)", "graphviz", "h5py", "matplotlib", "networkx", "numba", "opt_einsum", "pandas", "pgmpy", "pynndescent", "pytorch-memlab", "rdflib", "rdkit", "scikit-image", "statsmodels", "sympy", "tabulate", "torch_geometric[graphgym,modelhub]", "torchmetrics", "trimesh"]
+graphgym = ["hydra-core", "protobuf (<4.21)", "pytorch-lightning", "yacs"]
+modelhub = ["huggingface_hub"]
+test = ["onnx", "onnxruntime", "pytest", "pytest-cov"]
+
+[[package]]
 name = "torchvision"
 version = "0.19.0"
 description = "image and video datasets and models for torch deep learning"
@@ -4798,6 +4949,22 @@ docs = ["furo", "sphinx", "sphinx-copybutton", "sphinx-inline-tabs", "sphinx-not
 tests = ["coverage[toml]"]
 
 [[package]]
+name = "webdataset"
+version = "0.2.96"
+description = "Record sequential storage for deep learning."
+optional = false
+python-versions = ">=3.6"
+files = [
+    {file = "webdataset-0.2.96-py3-none-any.whl", hash = "sha256:ae5ef6a41fb202509def739e514d4d61256afe0c72ed8032d6c7c2bfd3df9f93"},
+    {file = "webdataset-0.2.96.tar.gz", hash = "sha256:d10df0dd1acda980a9cef5a7e2e0ae0011e450b6aa9f04928cddd5d6205db652"},
+]
+
+[package.dependencies]
+braceexpand = "*"
+numpy = "*"
+pyyaml = "*"
+
+[[package]]
 name = "webencodings"
 version = "0.5.1"
 description = "Character encoding aliases for legacy web content"
@@ -5022,4 +5189,4 @@ multidict = ">=4.0"
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.11.dev0"
-content-hash = "120948a4a0608de19b5615ffdc35ebfce573f270ea036addbfebe2095cfa4902"
+content-hash = "b679bafebd5d03a8c2a6dbdd67bdca60a2964288a06b331054021f55b121021a"

@@ -44,6 +44,13 @@ def parse_args(input_args=None):
         help="Model name for timm",
     )
     parser.add_argument(
+        "--version",
+        type=str,
+        default=None,
+        required=True,
+        help="Version of the model",
+    )
+    parser.add_argument(
         "--model_dir",
         type=str,
         default=None,
@@ -389,7 +396,7 @@ def main(args):
             "patient_id": val_metadata["patient_id"],
             "fold": args.fold,
             "target": val_metadata["target"],
-            f"oof_{args.model_identifier}": best_val_probs.flatten(),
+            f"oof_{args.model_name}_{args.version}": best_val_probs.flatten(),
         }
     )
     oof_df.to_csv(

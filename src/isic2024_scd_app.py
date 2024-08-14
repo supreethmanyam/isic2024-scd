@@ -9,10 +9,18 @@ from modal import App, Image, Mount, Secret, Volume
 
 GPU_CONFIG = os.environ.get("GPU_CONFIG", "a10g:1")
 app = App(name="isic2024-scd", secrets=[Secret.from_name("kaggle-api-token")])
-image = Image.debian_slim(python_version="3.10").poetry_install_from_file(
-    poetry_pyproject_toml="../pyproject.toml",
-    poetry_lockfile="../poetry.lock",
-    only=["main"],
+image = (
+    Image.debian_slim(python_version="3.10")
+    .poetry_install_from_file(
+        poetry_pyproject_toml="../pyproject.toml",
+        poetry_lockfile="../poetry.lock",
+        only=["main"],
+    )
+    .run_commands(
+        "apt-get update",
+        # Required to install libs such as libGL.so.1
+        "apt-get install ffmpeg libsm6 libxext6 --yes",
+    )
 )
 
 weights_volume = Volume.from_name("isic2024-scd-weights", create_if_missing=True)
@@ -261,14 +269,14 @@ def upload_external_data(year: str):
 
 def mount_folder(folder_name: str):
     script_local_path = Path(__file__).parent / folder_name
-    script_remote_path = Path(f"/root/")
+    script_remote_path = Path(f"/root/{folder_name}")
     return Mount.from_local_dir(
         local_path=script_local_path, remote_path=script_remote_path
     )
 
 
 @dataclass
-class Config:
+class PreTrainConfig:
     target_mode: str = "multi"
     mixed_precision: bool = "fp16"
     image_size: int = 64
@@ -285,15 +293,31 @@ class Config:
     debug: bool = False
 
 
+@dataclass
+class FinetuneConfig:
+    mixed_precision: bool = "fp16"
+    image_size: int = 64
+    sampling_rate: float = 0.01
+    train_batch_size: int = 64
+    val_batch_size: int = 512
+    num_workers: int = 8
+    init_lr: float = 3e-5
+    num_epochs: int = 20
+    n_tta: int = 8
+    seed: int = 2022
+
+    debug: bool = False
+
+
 @app.function(
     image=image,
-    mounts=[mount_folder("train")],
+    mounts=[mount_folder("pretrain")],
     volumes={str(INPUT_DIR): input_volume, str(WEIGHTS_DIR): weights_volume},
     gpu=GPU_CONFIG,
     timeout=60 * 60 * 24,  # 24 hours
-    cpu=Config.num_workers,
+    cpu=PreTrainConfig.num_workers,
 )
-def train(model_name: str, version: str, fold: int):
+def pretrain(model_name: str, version: str, fold: int):
     import json
     import subprocess
     from pprint import pprint
@@ -316,11 +340,11 @@ def train(model_name: str, version: str, fold: int):
             raise subprocess.CalledProcessError(exitcode, "\n".join(cmd))
 
     setup_kaggle()
-    config = Config()
+    config = PreTrainConfig()
     print(f"Running with config:")
     pprint(config.__dict__)
     metadata = {"params": config.__dict__}
-    model_identifier = f"{model_name}_{version}"
+    model_identifier = f"{model_name}_{version}_pretrain"
     model_dir = Path(WEIGHTS_DIR) / model_identifier
     model_dir.mkdir(parents=True, exist_ok=True)
     with open(model_dir / f"{model_identifier}_run_metadata.json", "w") as f:
@@ -342,9 +366,10 @@ def train(model_name: str, version: str, fold: int):
         [
             "accelerate",
             "launch",
-            "run.py",
+            "pretrain/run.py",
             f"--model_identifier={model_identifier}",
             f"--model_name={model_name}",
+            f"--version={version}",
             f"--model_dir={model_dir}",
             f"--data_dir={data_dir}",
         ]
@@ -375,11 +400,91 @@ def train(model_name: str, version: str, fold: int):
 
 @app.function(
     image=image,
-    mounts=[mount_folder("train")],
+    mounts=[mount_folder("finetune")],
+    volumes={str(INPUT_DIR): input_volume, str(WEIGHTS_DIR): weights_volume},
+    gpu=GPU_CONFIG,
+    timeout=60 * 60 * 24,  # 24 hours
+    cpu=FinetuneConfig.num_workers,
+)
+def finetune(model_name: str, version: str, fold: int):
+    import json
+    import subprocess
+    from pprint import pprint
+
+    from accelerate.utils import write_basic_config
+
+    def _exec_subprocess(cmd: list[str]):
+        """Executes subprocess and prints log to terminal while subprocess is running."""
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        with process.stdout as pipe:
+            for line in iter(pipe.readline, b""):
+                line_str = line.decode()
+                print(f"{line_str}", end="")
+
+        if exitcode := process.wait() != 0:
+            raise subprocess.CalledProcessError(exitcode, "\n".join(cmd))
+
+    setup_kaggle()
+    config = FinetuneConfig()
+    print(f"Running with config:")
+    pprint(config.__dict__)
+    metadata = {"params": config.__dict__}
+    model_identifier = f"{model_name}_{version}_finetune"
+    model_dir = Path(WEIGHTS_DIR) / model_identifier
+    model_dir.mkdir(parents=True, exist_ok=True)
+    pretrained_model_dir = Path(WEIGHTS_DIR) / f"{model_name}_{version}_pretrain"
+    with open(model_dir / f"{model_identifier}_run_metadata.json", "w") as f:
+        json.dump(metadata, f)
+
+    data_dir = INPUT_DIR / "isic-2024-challenge"
+
+    write_basic_config(mixed_precision=config.mixed_precision)
+    print("Launching training script")
+    commands = (
+        [
+            "accelerate",
+            "launch",
+            "finetune/run.py",
+            f"--model_identifier={model_identifier}",
+            f"--model_name={model_name}",
+            f"--version={version}",
+            f"--pretrained_model_dir={pretrained_model_dir}",
+            f"--model_dir={model_dir}",
+            f"--data_dir={data_dir}",
+        ]
+        + [
+            f"--fold={fold}",
+        ]
+        + [
+            f"--mixed_precision={config.mixed_precision}",
+            f"--image_size={config.image_size}",
+            f"--train_batch_size={config.train_batch_size}",
+            f"--val_batch_size={config.val_batch_size}",
+            f"--num_workers={config.num_workers}",
+            f"--init_lr={config.init_lr}",
+            f"--sampling_rate={config.sampling_rate}",
+            f"--num_epochs={config.num_epochs}",
+            f"--n_tta={config.n_tta}",
+            f"--seed={config.seed}",
+        ]
+        + (["--debug"] if config.debug else [])
+    )
+    print(subprocess.list2cmdline(commands))
+    _exec_subprocess(commands)
+    weights_volume.commit()
+
+
+@app.function(
+    image=image,
+    mounts=[mount_folder("pretrain")],
     volumes={str(WEIGHTS_DIR): weights_volume},
     timeout=60 * 60,  # 1 hour
 )
-def upload_weights(model_name: str, version: str):
+def upload_weights(model_name: str, version: str, mode: str | None = None):
     import json
     import subprocess
     from glob import glob
@@ -388,11 +493,13 @@ def upload_weights(model_name: str, version: str):
 
     import numpy as np
     import pandas as pd
-    from utils import compute_auc, compute_pauc
+    from pretrain.utils import compute_auc, compute_pauc
 
     setup_kaggle()
 
-    model_identifier = f"{model_name}_{version}"
+    if mode not in ["pretrain", "finetune"]:
+        raise ValueError("Value of mode must be one of ['pretrain', 'finetune']")
+    model_identifier = f"{model_name}_{version}_{mode}"
     model_dir = Path(WEIGHTS_DIR) / model_identifier
 
     oof_preds_fold_filepaths = glob(
@@ -408,8 +515,6 @@ def upload_weights(model_name: str, version: str):
     val_auc_scores = {}
     val_pauc_scores = {}
     best_num_epochs = {}
-    train_epoch_losses = {}
-    val_epoch_losses = {}
     val_epoch_paucs = {}
     val_epoch_aucs = {}
     for fold in all_folds:
@@ -417,19 +522,17 @@ def upload_weights(model_name: str, version: str):
 
         val_auc_scores[f"fold_{fold}"] = compute_auc(
             oof_preds_df.loc[val_index, "target"],
-            oof_preds_df.loc[val_index, f"oof_{model_identifier}"],
+            oof_preds_df.loc[val_index, f"oof_{model_name}_{version}"],
         )
         val_pauc_scores[f"fold_{fold}"] = compute_pauc(
             oof_preds_df.loc[val_index, "target"],
-            oof_preds_df.loc[val_index, f"oof_{model_identifier}"],
+            oof_preds_df.loc[val_index, f"oof_{model_name}_{version}"],
             min_tpr=0.8,
         )
 
         with open(model_dir / f"models/fold_{fold}/metadata.json", "r") as f:
             fold_metadata = json.load(f)
             best_num_epochs[f"fold_{fold}"] = fold_metadata["best_epoch"]
-            train_epoch_losses[f"fold_{fold}"] = fold_metadata["train_losses"]
-            val_epoch_losses[f"fold_{fold}"] = fold_metadata["val_losses"]
             val_epoch_paucs[f"fold_{fold}"] = fold_metadata["val_paucs"]
             val_epoch_aucs[f"fold_{fold}"] = fold_metadata["val_aucs"]
         assert np.allclose(
@@ -441,10 +544,10 @@ def upload_weights(model_name: str, version: str):
     pprint(val_pauc_scores)
 
     cv_auc_oof = compute_auc(
-        oof_preds_df["target"], oof_preds_df[f"oof_{model_identifier}"]
+        oof_preds_df["target"], oof_preds_df[f"oof_{model_name}_{version}"]
     )
     cv_pauc_oof = compute_pauc(
-        oof_preds_df["target"], oof_preds_df[f"oof_{model_identifier}"], min_tpr=0.8
+        oof_preds_df["target"], oof_preds_df[f"oof_{model_name}_{version}"], min_tpr=0.8
     )
 
     cv_auc_avg = np.mean(list(val_auc_scores.values()))
@@ -470,8 +573,6 @@ def upload_weights(model_name: str, version: str):
         "cv_pauc_avg": cv_pauc_avg,
         "cv_auc_std": cv_auc_std,
         "cv_pauc_std": cv_pauc_std,
-        "train_epoch_losses": train_epoch_losses,
-        "val_epoch_losses": val_epoch_losses,
         "val_epoch_paucs": val_epoch_paucs,
         "val_epoch_aucs": val_epoch_aucs,
     }
@@ -482,16 +583,16 @@ def upload_weights(model_name: str, version: str):
     with open(model_dir / f"{model_identifier}_run_metadata.json", "w") as f:
         json.dump(metadata, f)
 
-    shutil.copy("models.py", model_dir)
-    shutil.copy("dataset.py", model_dir)
-    shutil.copy("engine.py", model_dir)
-    shutil.copy("utils.py", model_dir)
+    shutil.copy(f"{mode}/models.py", model_dir)
+    shutil.copy(f"{mode}/dataset.py", model_dir)
+    shutil.copy(f"{mode}/engine.py", model_dir)
+    shutil.copy(f"{mode}/utils.py", model_dir)
 
     subprocess.run(f"kaggle datasets init -p {model_dir}", shell=True, check=True)
     with open(model_dir / "dataset-metadata.json", "r") as f:
         metadata = json.load(f)
         title_part = f"{model_name.upper()}_{version}"
-        metadata["title"] = f"ISIC_SCD_{title_part}_TRAIN"
+        metadata["title"] = f"ISIC_SCD_{title_part}_{mode.upper()}"
         metadata["id"] = f"supreethmanyam/{metadata['title'].lower().replace('_', '-')}"
     with open(model_dir / "dataset-metadata.json", "w") as f:
         json.dump(metadata, f)
