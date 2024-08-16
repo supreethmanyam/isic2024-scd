@@ -9,84 +9,6 @@ from albumentations.pytorch import ToTensorV2
 from PIL import Image
 from torch.utils.data import Dataset
 
-binary_target_mapping_dict = {
-    "2020": {"benign": 0, "malignant": 1},
-    "2019": {
-        "nevus": 0,
-        "melanoma": 1,
-        "seborrheic keratosis": 0,
-        "pigmented benign keratosis": 0,
-        "dermatofibroma": 0,
-        "squamous cell carcinoma": 1,
-        "basal cell carcinoma": 1,
-        "vascular lesion": 0,
-        "actinic keratosis": 0,
-        "solar lentigo": 0,
-    },
-}
-multi_target_mapping_dict = {
-    "2024": {
-        "Hidradenoma": "unknown",
-        "Lichen planus like keratosis": "BKL",
-        "Pigmented benign keratosis": "BKL",
-        "Seborrheic keratosis": "BKL",
-        "Solar lentigo": "BKL",
-        "Nevus": "NV",
-        "Angiofibroma": "unknown",
-        "Dermatofibroma": "DF",
-        "Fibroepithelial polyp": "unknown",
-        "Scar": "unknown",
-        "Hemangioma": "unknown",
-        "Trichilemmal or isthmic-catagen or pilar cyst": "unknown",
-        "Lentigo NOS": "BKL",
-        "Verruca": "unknown",
-        "Solar or actinic keratosis": "AKIEC",
-        "Atypical intraepithelial melanocytic proliferation": "unknown",
-        "Atypical melanocytic neoplasm": "unknown",
-        "Basal cell carcinoma": "BCC",
-        "Squamous cell carcinoma in situ": "SCC",
-        "Squamous cell carcinoma, Invasive": "SCC",
-        "Squamous cell carcinoma, NOS": "SCC",
-        "Melanoma in situ": "MEL",
-        "Melanoma Invasive": "MEL",
-        "Melanoma metastasis": "MEL",
-        "Melanoma, NOS": "MEL",
-    },
-    "2020": {
-        "nevus": "NV",
-        "melanoma": "MEL",
-        "seborrheic keratosis": "BKL",
-        "lentigo NOS": "BKL",
-        "lichenoid keratosis": "BKL",
-        "other": "unknown",
-        "solar lentigo": "BKL",
-        "scar": "unknown",
-        "cafe-au-lait macule": "unknown",
-        "atypical melanocytic proliferation": "unknown",
-        "pigmented benign keratosis": "BKL",
-    },
-    "2019": {
-        "nevus": "NV",
-        "melanoma": "MEL",
-        "seborrheic keratosis": "BKL",
-        "pigmented benign keratosis": "BKL",
-        "dermatofibroma": "DF",
-        "squamous cell carcinoma": "SCC",
-        "basal cell carcinoma": "BCC",
-        "vascular lesion": "VASC",
-        "actinic keratosis": "AKIEC",
-        "solar lentigo": "BKL",
-    },
-}
-all_labels = np.unique(
-    list(multi_target_mapping_dict["2024"].values())
-    + list(multi_target_mapping_dict["2020"].values())
-    + list(multi_target_mapping_dict["2019"].values())
-)
-label2idx = {label: idx for idx, label in enumerate(all_labels)}
-malignant_labels = ["BCC", "MEL", "SCC"]
-malignant_idx = [label2idx[label] for label in malignant_labels]
-
 
 def dev_augment(image_size, mean=None, std=None):
     if mean is not None and std is not None:
@@ -182,11 +104,11 @@ class ISICDataset(Dataset):
         if self.infer:
             return image
         else:
-            target = torch.tensor(row["label"])
+            target = torch.tensor(row["target"])
             return image, target
 
 
-def get_data(data_dir, data_2020_dir, data_2019_dir, target_mode, only_malignant=True):
+def get_data(data_dir):
     train_metadata = pd.read_csv(f"{data_dir}/train-metadata.csv", low_memory=False)
     train_images = h5py.File(f"{data_dir}/train-image.hdf5", mode="r")
 
@@ -194,82 +116,4 @@ def get_data(data_dir, data_2020_dir, data_2019_dir, target_mode, only_malignant
     train_metadata = train_metadata.merge(
         folds_df, on=["isic_id", "patient_id"], how="inner"
     )
-
-    if target_mode == "binary":
-        train_metadata["label"] = train_metadata["target"]
-    elif target_mode == "multi":
-        train_metadata["label"] = train_metadata["iddx_3"].fillna("unknown")
-        train_metadata["label"] = train_metadata["label"].replace(
-            multi_target_mapping_dict["2024"]
-        )
-        train_metadata["label"] = train_metadata["label"].map(label2idx)
-    else:
-        raise ValueError(f"Invalid target_mode: {target_mode}")
-
-    if data_2020_dir is not None:
-        train_metadata_2020 = pd.read_csv(
-            f"{data_2020_dir}/train-metadata.csv", low_memory=False
-        )
-        train_images_2020 = h5py.File(f"{data_2020_dir}/train-image.hdf5", mode="r")
-        if target_mode == "binary":
-            train_metadata_2020["label"] = train_metadata_2020["benign_malignant"].map(
-                binary_target_mapping_dict["2020"]
-            )
-            if only_malignant:
-                train_metadata_2020 = train_metadata_2020[
-                    train_metadata_2020["label"] == 1
-                ].reset_index(drop=True)
-        elif target_mode == "multi":
-            train_metadata_2020["label"] = train_metadata_2020["diagnosis"].fillna(
-                "unknown"
-            )
-            train_metadata_2020["label"] = train_metadata_2020["label"].replace(
-                multi_target_mapping_dict["2020"]
-            )
-            train_metadata_2020["label"] = train_metadata_2020["label"].map(label2idx)
-            if only_malignant:
-                train_metadata_2020 = train_metadata_2020[
-                    train_metadata_2020["label"].isin(malignant_idx)
-                ].reset_index(drop=True)
-        else:
-            raise ValueError(f"Invalid target_mode: {target_mode}")
-    else:
-        train_metadata_2020 = pd.DataFrame()
-        train_images_2020 = None
-
-    if data_2019_dir is not None:
-        train_metadata_2019 = pd.read_csv(
-            f"{data_2019_dir}/train-metadata.csv", low_memory=False
-        )
-        train_images_2019 = h5py.File(f"{data_2019_dir}/train-image.hdf5", mode="r")
-        if target_mode == "binary":
-            train_metadata_2019["label"] = train_metadata_2019["diagnosis"].map(
-                binary_target_mapping_dict["2019"]
-            )
-            if only_malignant:
-                train_metadata_2019 = train_metadata_2019[
-                    train_metadata_2019["label"] == 1
-                ].reset_index(drop=True)
-        elif target_mode == "multi":
-            train_metadata_2019["label"] = train_metadata_2019["diagnosis"].replace(
-                multi_target_mapping_dict["2019"]
-            )
-            train_metadata_2019["label"] = train_metadata_2019["label"].map(label2idx)
-            if only_malignant:
-                train_metadata_2019 = train_metadata_2019[
-                    train_metadata_2019["label"].isin(malignant_idx)
-                ].reset_index(drop=True)
-        else:
-            raise ValueError(f"Invalid target_mode: {target_mode}")
-    else:
-        train_metadata_2019 = pd.DataFrame()
-        train_images_2019 = None
-
-    return (
-        train_metadata,
-        train_images,
-        train_metadata_2020,
-        train_images_2020,
-        train_metadata_2019,
-        train_images_2019,
-    )
+    return train_metadata, train_images

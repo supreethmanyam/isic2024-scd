@@ -19,7 +19,7 @@ image = (
     .run_commands(
         "apt-get update",
         # Required to install libs such as libGL.so.1
-        "apt-get install ffmpeg libsm6 libxext6 --yes",
+        "apt-get install ffmpeg libsm6 libxext6 tree --yes",
     )
 )
 
@@ -90,7 +90,7 @@ def download_competition_data(path: Path, recreate: bool = False):
             check=True,
         )
         # Extract competition dataset
-        filepath = INPUT_DIR / "isic-2024-challenge.zip"
+        filepath = path / "isic-2024-challenge.zip"
         print(f"Extracting .zip into {path}...")
         extract(filepath, path, allowed_extensions=(".hdf5", ".csv"))
         print(f"Extracted {filepath} to {path}")
@@ -277,19 +277,19 @@ def mount_folder(folder_name: str):
 
 @dataclass
 class PreTrainConfig:
-    target_mode: str = "multi"
+    mode: str = "pretrain"
     mixed_precision: bool = "fp16"
-    image_size: int = 128
+    image_size: int = 256
     train_batch_size: int = 64
     val_batch_size: int = 512
     num_workers: int = 8
     init_lr: float = 3e-5
     num_epochs: int = 20
     n_tta: int = 8
+    down_sampling: bool = True
+    fold_method: str = "gkf"
     seed: int = 2022
 
-    ext: str = "2020,2019"
-    only_malignant: bool = False
     debug: bool = False
 
 
@@ -353,18 +353,10 @@ def pretrain(model_name: str, version: str, fold: int):
     model_identifier = f"{model_name}_{version}_pretrain"
     model_dir = Path(WEIGHTS_DIR) / model_identifier
     model_dir.mkdir(parents=True, exist_ok=True)
-    with open(model_dir / f"{model_identifier}_run_metadata.json", "w") as f:
+    with open(model_dir / f"{model_name}_{version}_run_metadata.json", "w") as f:
         json.dump(metadata, f)
 
     data_dir = INPUT_DIR / "isic-2024-challenge"
-    if "2020" in config.ext:
-        data_2020_dir = external_data_mapping["2020"]["path"]
-    else:
-        data_2020_dir = ""
-    if "2019" in config.ext:
-        data_2019_dir = external_data_mapping["2019"]["path"]
-    else:
-        data_2019_dir = ""
 
     write_basic_config(mixed_precision=config.mixed_precision)
     print("Launching training script")
@@ -373,20 +365,16 @@ def pretrain(model_name: str, version: str, fold: int):
             "accelerate",
             "launch",
             "pretrain/run.py",
-            f"--model_identifier={model_identifier}",
             f"--model_name={model_name}",
             f"--version={version}",
             f"--model_dir={model_dir}",
             f"--data_dir={data_dir}",
+            f"--fold_method={config.fold_method}",
         ]
-        + ([f"--data_2020_dir={data_2020_dir}"] if data_2020_dir else [])
-        + ([f"--data_2019_dir={data_2019_dir}"] if data_2019_dir else [])
         + [
             f"--fold={fold}",
         ]
-        + (["--only_malignant"] if config.only_malignant else [])
         + [
-            f"--target_mode={config.target_mode}",
             f"--mixed_precision={config.mixed_precision}",
             f"--image_size={config.image_size}",
             f"--train_batch_size={config.train_batch_size}",
@@ -397,6 +385,7 @@ def pretrain(model_name: str, version: str, fold: int):
             f"--n_tta={config.n_tta}",
             f"--seed={config.seed}",
         ]
+        + (["--down_sampling"] if config.down_sampling else [])
         + (["--debug"] if config.debug else [])
     )
     print(subprocess.list2cmdline(commands))
@@ -514,13 +503,13 @@ def upload_weights(model_name: str, version: str, mode: str | None = None):
     model_dir = Path(WEIGHTS_DIR) / model_identifier
 
     oof_preds_fold_filepaths = glob(
-        str(model_dir / f"oof_preds_{model_identifier}_fold_*.csv")
+        str(model_dir / f"oof_preds_{model_name}_{version}_fold_*.csv")
     )
     oof_preds_df = pd.concat(
         [pd.read_csv(filepath) for filepath in oof_preds_fold_filepaths],
         ignore_index=True,
     )
-    oof_preds_df.to_csv(model_dir / f"oof_preds_{model_identifier}.csv", index=False)
+    oof_preds_df.to_csv(model_dir / f"oof_preds_{model_name}_{version}.csv", index=False)
 
     all_folds = np.unique(oof_preds_df["fold"])
     val_auc_scores = {}
@@ -588,10 +577,10 @@ def upload_weights(model_name: str, version: str, mode: str | None = None):
         "val_epoch_aucs": val_epoch_aucs,
     }
 
-    with open(model_dir / f"{model_identifier}_run_metadata.json", "r") as f:
+    with open(model_dir / f"{model_name}_{version}_run_metadata.json", "r") as f:
         metadata = json.load(f)
         metadata = {**metadata, **metrics_metadata}
-    with open(model_dir / f"{model_identifier}_run_metadata.json", "w") as f:
+    with open(model_dir / f"{model_name}_{version}_run_metadata.json", "w") as f:
         json.dump(metadata, f)
 
     shutil.copy(f"{mode}/models.py", model_dir)
@@ -630,4 +619,4 @@ def upload_weights(model_name: str, version: str, mode: str | None = None):
             shell=True,
             check=True,
         )
-    print(f"Weights for {model_identifier} uploaded to Kaggle ✅")
+    print(f"Weights for {model_name}_{version} uploaded to Kaggle ✅")

@@ -16,7 +16,6 @@ from accelerate.utils import (
 )
 from dataset import (
     ISICDataset,
-    all_labels,
     dev_augment,
     get_data,
     val_augment,
@@ -24,18 +23,12 @@ from dataset import (
 from engine import train_epoch, val_epoch
 from models import ISICNet
 from torch.utils.data import DataLoader, RandomSampler
-from utils import logger
+from imblearn.under_sampling import RandomUnderSampler
+from utils import logger, compute_pauc
 
 
 def parse_args(input_args=None):
     parser = argparse.ArgumentParser(description="Train ISIC2024 SCD")
-    parser.add_argument(
-        "--model_identifier",
-        type=str,
-        default=None,
-        required=True,
-        help="Model identifier for the run",
-    )
     parser.add_argument(
         "--model_name",
         type=str,
@@ -71,31 +64,10 @@ def parse_args(input_args=None):
         help="The directory where the data is stored.",
     )
     parser.add_argument(
-        "--data_2020_dir",
-        type=str,
-        default=None,
-        help="The directory where the 2020 data is stored.",
-    )
-    parser.add_argument(
-        "--data_2019_dir",
-        type=str,
-        default=None,
-        help="The directory where the 2019 data is stored.",
+        "--fold_method", type=str, default=None, required=True, help="Fold method.", choices=["gkf", "sgkf"]
     )
     parser.add_argument(
         "--fold", type=int, default=None, required=True, help="Fold number."
-    )
-    parser.add_argument(
-        "--only_malignant",
-        action="store_true",
-        default=False,
-        help="Use only malignant samples from external data.",
-    )
-    parser.add_argument(
-        "--target_mode",
-        type=str,
-        required=True,
-        choices=["binary", "multi"],
     )
     parser.add_argument(
         "--mixed_precision",
@@ -134,6 +106,9 @@ def parse_args(input_args=None):
     parser.add_argument("--num_epochs", type=int, default=2, help="Number of epochs.")
     parser.add_argument(
         "--n_tta", type=int, default=6, help="Number of test time augmentations."
+    )
+    parser.add_argument(
+        "--down_sampling", action="store_true", default=False, help="Down sampling."
     )
     parser.add_argument(
         "--seed", type=int, default=None, help="A seed for reproducible training."
@@ -175,39 +150,42 @@ def main(args):
     if args.seed is not None:
         set_seed(args.seed)
 
-    (
-        train_metadata,
-        train_images,
-        train_metadata_2020,
-        train_images_2020,
-        train_metadata_2019,
-        train_images_2019,
-    ) = get_data(
-        args.data_dir,
-        args.data_2020_dir,
-        args.data_2019_dir,
-        target_mode=args.target_mode,
-        only_malignant=args.only_malignant,
-    )
+    train_metadata, train_images = get_data(args.data_dir)
+
+    if args.fold_method == "gkf":
+        logger.info("Using GroupKFold")
+        fold_column = "gkf_fold"
+    elif args.fold_method == "sgkf":
+        logger.info("Using StratifiedGroupKFold")
+        fold_column = "sgkf_fold"
+    else:
+        raise ValueError(f"Fold method {args.fold_method} not supported")
 
     if args.debug:
         args.num_epochs = 2
         dev_index = (
-            train_metadata[train_metadata["fold"] != args.fold]
+            train_metadata[train_metadata[fold_column] != args.fold]
             .sample(args.train_batch_size * 3, random_state=args.seed)
             .index
         )
         val_index = (
-            train_metadata[train_metadata["fold"] == args.fold]
+            train_metadata[train_metadata[fold_column] == args.fold]
             .sample(args.val_batch_size * 10, random_state=args.seed)
             .index
         )
     else:
-        dev_index = train_metadata[train_metadata["fold"] != args.fold].index
-        val_index = train_metadata[train_metadata["fold"] == args.fold].index
+        dev_index = train_metadata[train_metadata[fold_column] != args.fold].index
+        val_index = train_metadata[train_metadata[fold_column] == args.fold].index
 
     dev_metadata = train_metadata.loc[dev_index, :].reset_index(drop=True)
     val_metadata = train_metadata.loc[val_index, :].reset_index(drop=True)
+
+    if args.down_sampling and not args.debug:
+        logger.info("Down sampling")
+        rus = RandomUnderSampler(sampling_strategy=0.01, random_state=args.seed)
+        dev_metadata, _ = rus.fit_resample(
+            dev_metadata, dev_metadata["target"]
+        )
 
     mean = None
     std = None
@@ -224,43 +202,6 @@ def main(args):
         augment=val_augment(args.image_size, mean=mean, std=std),
         infer=False,
     )
-
-    if not train_metadata_2020.empty:
-        logger.info("Using 2020 data")
-        if args.debug:
-            train_metadata_2020 = train_metadata_2020.sample(
-                args.train_batch_size * 1
-            ).reset_index(drop=True)
-        train_dataset_2020 = ISICDataset(
-            train_metadata_2020,
-            train_images_2020,
-            augment=dev_augment(args.image_size, mean=mean, std=std),
-            infer=False,
-        )
-        dev_dataset = torch.utils.data.ConcatDataset([dev_dataset, train_dataset_2020])
-    if not train_metadata_2019.empty:
-        logger.info("Using 2019 data")
-        if args.debug:
-            train_metadata_2019 = train_metadata_2019.sample(
-                args.train_batch_size * 1
-            ).reset_index(drop=True)
-        train_dataset_2019 = ISICDataset(
-            train_metadata_2019,
-            train_images_2019,
-            augment=dev_augment(args.image_size, mean=mean, std=std),
-            infer=False,
-        )
-        dev_dataset = torch.utils.data.ConcatDataset([dev_dataset, train_dataset_2019])
-
-    if not train_metadata_2020.empty or not train_metadata_2019.empty:
-        if args.only_malignant:
-            logger.info("Using only malignant data")
-            logger.info(f"Using {train_metadata_2020.shape[0]} 2020 samples")
-            logger.info(f"Using {train_metadata_2019.shape[0]} 2019 samples")
-        else:
-            logger.info("Using all data")
-            logger.info(f"Using {train_metadata_2020.shape[0]} 2020 samples")
-            logger.info(f"Using {train_metadata_2019.shape[0]} 2019 samples")
 
     sampler = RandomSampler(dev_dataset)
 
@@ -279,20 +220,12 @@ def main(args):
         drop_last=False,
         pin_memory=True,
     )
-    logger.info(f"Training in {args.target_mode} mode")
-    logger.info(f"Building with {len(all_labels)} classes")
     model = ISICNet(
         model_name=args.model_name,
-        target_mode=args.target_mode,
         pretrained=True,
     )
     model = model.to(accelerator.device)
-    if args.target_mode == "binary":
-        criterion = nn.BCELoss()
-    elif args.target_mode == "multi":
-        criterion = nn.CrossEntropyLoss()
-    else:
-        raise ValueError(f"Invalid target mode : {args.target_mode}")
+    criterion = nn.BCELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.init_lr)
     lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
@@ -313,19 +246,20 @@ def main(args):
         model, optimizer, dev_dataloader, val_dataloader, lr_scheduler
     )
 
+    best_val_loss = 0
     best_val_auc = 0
     best_val_pauc = 0
-    best_val_loss = 0
     best_epoch = 0
     best_val_probs = None
     train_losses = []
     val_losses = []
     val_paucs = []
+    val_paucs_aus = []
     val_aucs = []
     for epoch in range(1, args.num_epochs + 1):
-        logger.info(f"Fold {args.fold} | Epoch {epoch}")
         start_time = time.time()
         lr = optimizer.param_groups[0]["lr"]
+        logger.info(f"Fold {args.fold} | Epoch {epoch} | LR {lr:.7f}")
         train_loss = train_epoch(
             epoch,
             model,
@@ -334,7 +268,6 @@ def main(args):
             dev_dataloader,
             lr_scheduler,
             accelerator,
-            args.target_mode,
         )
         (
             val_loss,
@@ -349,16 +282,17 @@ def main(args):
             val_dataloader,
             accelerator,
             args.n_tta,
-            args.target_mode,
         )
+        val_pauc_aus = compute_pauc(val_targets[val_metadata["is_aus"] == 1], val_probs[val_metadata["is_aus"] == 1])
         train_losses.append(train_loss)
         val_losses.append(val_loss)
         val_paucs.append(val_pauc)
+        val_paucs_aus.append(val_pauc_aus)
         val_aucs.append(val_auc)
         logger.info(
             f"Fold: {args.fold} | Epoch: {epoch} | LR: {lr:.7f} |"
             f" Train loss: {train_loss:.5f} | Val loss: {val_loss:.5f} |"
-            f" Val AUC: {val_auc:.5f} | Val pAUC: {val_pauc:.5f}"
+            f" Val AUC: {val_auc:.5f} | Val pAUC: {val_pauc:.5f} | Val pAUC AUS: {val_pauc_aus:.5f}"
         )
         if val_pauc > best_val_pauc:
             logger.info(
@@ -386,8 +320,8 @@ def main(args):
     logger.info(
         f"Fold: {args.fold} |"
         f" Best Val pAUC: {best_val_pauc} |"
-        f" Best AUC: {best_val_auc} |"
-        f" Best loss: {best_val_loss} |"
+        f" Best Val AUC: {best_val_auc} |"
+        f" Best Val loss: {best_val_loss} |"
         f" Best epoch: {best_epoch}"
     )
     oof_df = pd.DataFrame(
@@ -400,7 +334,7 @@ def main(args):
         }
     )
     oof_df.to_csv(
-        f"{args.model_dir}/oof_preds_{args.model_identifier}_fold_{args.fold}.csv",
+        f"{args.model_dir}/oof_preds_{args.model_name}_{args.version}_fold_{args.fold}.csv",
         index=False,
     )
 
@@ -413,6 +347,7 @@ def main(args):
         "train_losses": np.array(train_losses, dtype=float).tolist(),
         "val_losses": np.array(val_losses, dtype=float).tolist(),
         "val_paucs": val_paucs,
+        "val_paucs_aus": val_paucs_aus,
         "val_aucs": val_aucs,
     }
     with open(f"{args.model_dir}/models/fold_{args.fold}/metadata.json", "w") as f:
