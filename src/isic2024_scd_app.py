@@ -279,7 +279,7 @@ def mount_folder(folder_name: str):
 class PreTrainConfig:
     mode: str = "pretrain"
     mixed_precision: bool = "fp16"
-    image_size: int = 256
+    image_size: int = 64
     train_batch_size: int = 64
     val_batch_size: int = 512
     num_workers: int = 8
@@ -288,6 +288,7 @@ class PreTrainConfig:
     n_tta: int = 8
     down_sampling: bool = True
     fold_method: str = "gkf"
+    use_meta: bool = True
     seed: int = 2022
 
     debug: bool = False
@@ -303,6 +304,7 @@ class FinetuneConfig:
     init_lr: float = 8e-5
     num_epochs: int = 20
     n_tta: int = 8
+    fold_method: str = "gkf"
     seed: int = 2022
 
     sampling_rate: float = 0.1
@@ -432,7 +434,7 @@ def finetune(model_name: str, version: str, fold: int):
     model_dir = Path(WEIGHTS_DIR) / model_identifier
     model_dir.mkdir(parents=True, exist_ok=True)
     pretrained_model_dir = Path(WEIGHTS_DIR) / f"{model_name}_{version}_pretrain"
-    with open(model_dir / f"{model_identifier}_run_metadata.json", "w") as f:
+    with open(model_dir / f"{model_name}_{version}_run_metadata.json", "w") as f:
         json.dump(metadata, f)
 
     data_dir = INPUT_DIR / "isic-2024-challenge"
@@ -444,12 +446,12 @@ def finetune(model_name: str, version: str, fold: int):
             "accelerate",
             "launch",
             "finetune/run.py",
-            f"--model_identifier={model_identifier}",
             f"--model_name={model_name}",
             f"--version={version}",
             f"--pretrained_model_dir={pretrained_model_dir}",
             f"--model_dir={model_dir}",
             f"--data_dir={data_dir}",
+            f"--fold_method={config.fold_method}",
         ]
         + [
             f"--fold={fold}",
@@ -480,7 +482,7 @@ def finetune(model_name: str, version: str, fold: int):
 
 @app.function(
     image=image,
-    mounts=[mount_folder("pretrain")],
+    mounts=[mount_folder("pretrain"), mount_folder("finetune")],
     volumes={str(WEIGHTS_DIR): weights_volume},
     timeout=60 * 60,  # 1 hour
 )

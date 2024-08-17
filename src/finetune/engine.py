@@ -103,7 +103,7 @@ def predict(model, test_dataloader, accelerator, n_tta, log_interval=10):
     test_probs = []
     total_steps = len(test_dataloader)
     with torch.no_grad():
-        for step, (images, index) in enumerate(test_dataloader):
+        for step, (images, _) in enumerate(test_dataloader):
             logits = 0
             probs = 0
             for i in range(n_tta):

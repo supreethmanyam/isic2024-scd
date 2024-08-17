@@ -4,8 +4,10 @@ import logging
 import time
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import torch
+import torch.nn as nn
 from accelerate import Accelerator
 from accelerate.utils import (
     DistributedDataParallelKwargs,
@@ -20,23 +22,17 @@ from dataset import (
 )
 from engine import train_epoch, val_epoch
 from models import ISICNet
+from torch.utils.data import DataLoader
+from imblearn.under_sampling import RandomUnderSampler
 from libauc.sampler import DualSampler
 from libauc.losses.auc import tpAUC_KL_Loss
 from libauc.optimizers import SOTAs
-from torch.utils.data import DataLoader
 from safetensors import safe_open
-from utils import logger
+from utils import logger, compute_pauc
 
 
 def parse_args(input_args=None):
     parser = argparse.ArgumentParser(description="Finetune ISIC2024 SCD")
-    parser.add_argument(
-        "--model_identifier",
-        type=str,
-        default=None,
-        required=True,
-        help="Model identifier for the run",
-    )
     parser.add_argument(
         "--model_name",
         type=str,
@@ -77,6 +73,9 @@ def parse_args(input_args=None):
         default=None,
         required=True,
         help="The directory where the data is stored.",
+    )
+    parser.add_argument(
+        "--fold_method", type=str, default=None, required=True, help="Fold method.", choices=["gkf", "sgkf"]
     )
     parser.add_argument(
         "--fold", type=int, default=None, required=True, help="Fold number."
@@ -179,21 +178,30 @@ def main(args):
 
     train_metadata, train_images = get_data(args.data_dir)
 
+    if args.fold_method == "gkf":
+        logger.info("Using GroupKFold")
+        fold_column = "gkf_fold"
+    elif args.fold_method == "sgkf":
+        logger.info("Using StratifiedGroupKFold")
+        fold_column = "sgkf_fold"
+    else:
+        raise ValueError(f"Fold method {args.fold_method} not supported")
+
     if args.debug:
         args.num_epochs = 2
         dev_index = (
-            train_metadata[train_metadata["fold"] != args.fold]
-            .sample(args.train_batch_size * 100, random_state=args.seed)
+            train_metadata[train_metadata[fold_column] != args.fold]
+            .sample(args.train_batch_size * 3, random_state=args.seed)
             .index
         )
         val_index = (
-            train_metadata[train_metadata["fold"] == args.fold]
+            train_metadata[train_metadata[fold_column] == args.fold]
             .sample(args.val_batch_size * 10, random_state=args.seed)
             .index
         )
     else:
-        dev_index = train_metadata[train_metadata["fold"] != args.fold].index
-        val_index = train_metadata[train_metadata["fold"] == args.fold].index
+        dev_index = train_metadata[train_metadata[fold_column] != args.fold].index
+        val_index = train_metadata[train_metadata[fold_column] == args.fold].index
 
     dev_metadata = train_metadata.loc[dev_index, :].reset_index(drop=True)
     val_metadata = train_metadata.loc[val_index, :].reset_index(drop=True)
@@ -240,15 +248,17 @@ def main(args):
         drop_last=False,
         pin_memory=True,
     )
-    model = ISICNet(model_name=args.model_name)
+    model = ISICNet(
+        model_name=args.model_name,
+        pretrained=False,
+    )
     model = model.to(accelerator.device)
 
     tensors = {}
     with safe_open(f"{args.pretrained_model_dir}/models/fold_{args.fold}/model.safetensors", framework="pt") as f:
         for key in f.keys():
-            if "classifier" not in key:
-                tensors[key] = f.get_tensor(key)
-    _ = model.load_state_dict(tensors, strict=False)
+            tensors[key] = f.get_tensor(key)
+    _ = model.load_state_dict(tensors, strict=True)
     logger.info("Pretrained weights loaded successfully")
 
     criterion = tpAUC_KL_Loss(data_len=len(dev_dataset),
@@ -350,7 +360,7 @@ def main(args):
         }
     )
     oof_df.to_csv(
-        f"{args.model_dir}/oof_preds_{args.model_identifier}_fold_{args.fold}.csv",
+        f"{args.model_dir}/oof_preds_{args.model_name}_{args.version}_fold_{args.fold}.csv",
         index=False,
     )
 

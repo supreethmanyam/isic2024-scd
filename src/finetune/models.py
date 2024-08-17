@@ -6,12 +6,13 @@ from timm import create_model
 class ISICNet(nn.Module):
     def __init__(
         self,
-        model_name
+        model_name,
+        pretrained=True,
     ):
         super(ISICNet, self).__init__()
         self.model = create_model(
             model_name=model_name,
-            pretrained=False,
+            pretrained=pretrained,
             in_chans=3,
             num_classes=0,
             global_pool="",
