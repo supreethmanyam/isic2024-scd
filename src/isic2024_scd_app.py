@@ -279,7 +279,7 @@ def mount_folder(folder_name: str):
 class PreTrainConfig:
     mode: str = "pretrain"
     mixed_precision: bool = "fp16"
-    image_size: int = 64
+    image_size: int = 128
     train_batch_size: int = 64
     val_batch_size: int = 512
     num_workers: int = 8
@@ -387,6 +387,7 @@ def pretrain(model_name: str, version: str, fold: int):
             f"--n_tta={config.n_tta}",
             f"--seed={config.seed}",
         ]
+        + (["--use_meta"] if config.use_meta else [])
         + (["--down_sampling"] if config.down_sampling else [])
         + (["--debug"] if config.debug else [])
     )
