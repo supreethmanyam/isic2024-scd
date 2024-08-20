@@ -11,18 +11,23 @@ def train_epoch(
     dev_dataloader,
     lr_scheduler,
     accelerator,
+    use_meta,
     log_interval=100,
 ):
     model.train()
     train_loss = []
     total_steps = len(dev_dataloader)
-    for step, (images, targets) in enumerate(dev_dataloader):
+    for step, (images, x_cat, x_cont, targets) in enumerate(dev_dataloader):
         optimizer.zero_grad()
-        logits = model(images)
+        if use_meta:
+            logits = model(images, x_cat, x_cont)
+        else:
+            logits = model(images)
         probs = torch.sigmoid(logits)
         targets = targets.float().unsqueeze(1)
         loss = criterion(probs, targets)
         accelerator.backward(loss)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1000.0)
         optimizer.step()
         lr_scheduler.step()
 
@@ -62,6 +67,7 @@ def val_epoch(
     val_dataloader,
     accelerator,
     n_tta,
+    use_meta,
     log_interval=10,
 ):
     model.eval()
@@ -70,11 +76,14 @@ def val_epoch(
     val_loss = []
     total_steps = len(val_dataloader)
     with torch.no_grad():
-        for step, (images, targets) in enumerate(val_dataloader):
+        for step, (images, x_cat, x_cont, targets) in enumerate(val_dataloader):
             logits = 0
             probs = 0
             for i in range(n_tta):
-                logits_iter = model(get_trans(images, i))
+                if use_meta:
+                    logits_iter = model(get_trans(images, i), x_cat, x_cont)
+                else:
+                    logits_iter = model(get_trans(images, i))
                 logits += logits_iter
                 probs += torch.sigmoid(logits_iter)
             logits /= n_tta
@@ -105,16 +114,19 @@ def val_epoch(
     )
 
 
-def predict(model, test_dataloader, accelerator, n_tta, log_interval=10):
+def predict(model, test_dataloader, accelerator, n_tta, use_meta, log_interval=10):
     model.eval()
     test_probs = []
     total_steps = len(test_dataloader)
     with torch.no_grad():
-        for step, images in enumerate(test_dataloader):
+        for step, (images, x_cat, x_cont) in enumerate(test_dataloader):
             logits = 0
             probs = 0
             for i in range(n_tta):
-                logits_iter = model(get_trans(images, i))
+                if use_meta:
+                    logits_iter = model(get_trans(images, i), x_cat, x_cont)
+                else:
+                    logits_iter = model(get_trans(images, i))
                 logits += logits_iter
                 probs += torch.sigmoid(logits_iter)
             logits /= n_tta

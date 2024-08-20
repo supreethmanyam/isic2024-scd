@@ -287,7 +287,6 @@ class PreTrainConfig:
     num_epochs: int = 20
     n_tta: int = 8
     down_sampling: bool = True
-    fold_method: str = "gkf"
     use_meta: bool = True
     seed: int = 2022
 
@@ -371,7 +370,6 @@ def pretrain(model_name: str, version: str, fold: int):
             f"--version={version}",
             f"--model_dir={model_dir}",
             f"--data_dir={data_dir}",
-            f"--fold_method={config.fold_method}",
         ]
         + [
             f"--fold={fold}",

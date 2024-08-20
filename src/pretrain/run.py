@@ -24,7 +24,7 @@ from engine import train_epoch, val_epoch
 from models import ISICNet
 from torch.utils.data import DataLoader, RandomSampler
 from imblearn.under_sampling import RandomUnderSampler
-from utils import logger, compute_pauc
+from utils import logger
 
 
 def parse_args(input_args=None):
@@ -62,9 +62,6 @@ def parse_args(input_args=None):
         default=None,
         required=True,
         help="The directory where the data is stored.",
-    )
-    parser.add_argument(
-        "--fold_method", type=str, default=None, required=True, help="Fold method.", choices=["gkf", "sgkf"]
     )
     parser.add_argument(
         "--fold", type=int, default=None, required=True, help="Fold number."
@@ -106,6 +103,9 @@ def parse_args(input_args=None):
     parser.add_argument("--num_epochs", type=int, default=2, help="Number of epochs.")
     parser.add_argument(
         "--n_tta", type=int, default=6, help="Number of test time augmentations."
+    )
+    parser.add_argument(
+        "--use_meta", action="store_true", default=False, help="Use metadata."
     )
     parser.add_argument(
         "--down_sampling", action="store_true", default=False, help="Down sampling."
@@ -150,67 +150,48 @@ def main(args):
     if args.seed is not None:
         set_seed(args.seed)
 
-    train_metadata, train_images = get_data(args.data_dir)
+    train_metadata, train_images, cat_cols, cont_cols, emb_szs = get_data(args.data_dir)
 
-    if args.fold_method == "gkf":
-        logger.info("Using GroupKFold")
-        fold_column = "gkf_fold"
-    elif args.fold_method == "sgkf":
-        logger.info("Using StratifiedGroupKFold")
-        fold_column = "sgkf_fold"
-    else:
-        raise ValueError(f"Fold method {args.fold_method} not supported")
+    fold_column = "fold"
+    dev_index = train_metadata[train_metadata[fold_column] != args.fold].index
+    val_index = train_metadata[train_metadata[fold_column] == args.fold].index
 
-    if args.debug:
-        args.num_epochs = 2
-        dev_index = (
-            train_metadata[train_metadata[fold_column] != args.fold]
-            .sample(args.train_batch_size * 3, random_state=args.seed)
-            .index
-        )
-        val_index = (
-            train_metadata[train_metadata[fold_column] == args.fold]
-            .sample(args.val_batch_size * 10, random_state=args.seed)
-            .index
-        )
-    else:
-        dev_index = train_metadata[train_metadata[fold_column] != args.fold].index
-        val_index = train_metadata[train_metadata[fold_column] == args.fold].index
-
-    dev_metadata = train_metadata.loc[dev_index, :].reset_index(drop=True)
-    val_metadata = train_metadata.loc[val_index, :].reset_index(drop=True)
-
-    if args.down_sampling and not args.debug:
-        logger.info("Down sampling")
-        rus = RandomUnderSampler(sampling_strategy=0.01, random_state=args.seed)
-        dev_metadata, _ = rus.fit_resample(
-            dev_metadata, dev_metadata["target"]
-        )
+    dev_df = train_metadata.loc[dev_index, :].reset_index(drop=True)
+    pos_samples = dev_df[dev_df["target"] == 1]
+    neg_samples = dev_df[dev_df["target"] == 0]
+    num_pos = len(pos_samples)
+    num_neg = num_pos * 100 if args.down_sampling else len(neg_samples)
 
     mean = None
     std = None
 
+    dev_metadata = dev_df.copy()
     dev_dataset = ISICDataset(
         dev_metadata,
         train_images,
         augment=dev_augment(args.image_size, mean=mean, std=std),
+        use_meta=args.use_meta,
+        cat_cols=cat_cols,
+        cont_cols=cont_cols,
         infer=False,
     )
+    dev_dataloader = DataLoader(
+        dev_dataset,
+        batch_size=args.train_batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        pin_memory=True,
+    )
+
+    val_metadata = train_metadata.loc[val_index, :].reset_index(drop=True)
     val_dataset = ISICDataset(
         val_metadata,
         train_images,
         augment=val_augment(args.image_size, mean=mean, std=std),
+        use_meta=args.use_meta,
+        cat_cols=cat_cols,
+        cont_cols=cont_cols,
         infer=False,
-    )
-
-    sampler = RandomSampler(dev_dataset)
-
-    dev_dataloader = DataLoader(
-        dev_dataset,
-        batch_size=args.train_batch_size,
-        sampler=sampler,
-        num_workers=args.num_workers,
-        pin_memory=True,
     )
     val_dataloader = DataLoader(
         val_dataset,
@@ -220,9 +201,14 @@ def main(args):
         drop_last=False,
         pin_memory=True,
     )
+
     model = ISICNet(
         model_name=args.model_name,
         pretrained=True,
+        use_meta=args.use_meta,
+        cat_cols=cat_cols,
+        cont_cols=cont_cols,
+        emb_szs=emb_szs,
     )
     model = model.to(accelerator.device)
     criterion = nn.BCELoss()
@@ -233,7 +219,7 @@ def main(args):
         max_lr=args.init_lr * 10,
         div_factor=10,
         epochs=args.num_epochs,
-        steps_per_epoch=len(dev_dataloader),
+        steps_per_epoch=(num_pos + num_neg) // args.train_batch_size,
     )
 
     (
@@ -254,10 +240,31 @@ def main(args):
     train_losses = []
     val_losses = []
     val_paucs = []
-    val_paucs_aus = []
     val_aucs = []
     for epoch in range(1, args.num_epochs + 1):
         start_time = time.time()
+        if args.down_sampling:
+            rus = RandomUnderSampler(sampling_strategy={0: num_neg, 1: num_pos}, random_state=args.seed + (epoch * 100))
+            dev_metadata, _ = rus.fit_resample(dev_df, dev_df["target"])
+            dev_dataset = ISICDataset(
+                dev_metadata,
+                train_images,
+                augment=dev_augment(args.image_size, mean=mean, std=std),
+                use_meta=args.use_meta,
+                cat_cols=cat_cols,
+                cont_cols=cont_cols,
+                infer=False,
+            )
+            sampler = RandomSampler(dev_dataset)
+            dev_dataloader = DataLoader(
+                dev_dataset,
+                batch_size=args.train_batch_size,
+                sampler=sampler,
+                num_workers=args.num_workers,
+                pin_memory=True,
+            )
+            dev_dataloader = accelerator.prepare(dev_dataloader)
+
         lr = optimizer.param_groups[0]["lr"]
         logger.info(f"Fold {args.fold} | Epoch {epoch} | LR {lr:.7f}")
         train_loss = train_epoch(
@@ -268,6 +275,7 @@ def main(args):
             dev_dataloader,
             lr_scheduler,
             accelerator,
+            args.use_meta,
         )
         (
             val_loss,
@@ -282,17 +290,16 @@ def main(args):
             val_dataloader,
             accelerator,
             args.n_tta,
+            args.use_meta,
         )
-        val_pauc_aus = compute_pauc(val_targets[val_metadata["is_aus"] == 1], val_probs[val_metadata["is_aus"] == 1])
         train_losses.append(train_loss)
         val_losses.append(val_loss)
         val_paucs.append(val_pauc)
-        val_paucs_aus.append(val_pauc_aus)
         val_aucs.append(val_auc)
         logger.info(
             f"Fold: {args.fold} | Epoch: {epoch} | LR: {lr:.7f} |"
             f" Train loss: {train_loss:.5f} | Val loss: {val_loss:.5f} |"
-            f" Val AUC: {val_auc:.5f} | Val pAUC: {val_pauc:.5f} | Val pAUC AUS: {val_pauc_aus:.5f}"
+            f" Val AUC: {val_auc:.5f} | Val pAUC: {val_pauc:.5f}"
         )
         if val_pauc > best_val_pauc:
             logger.info(
@@ -347,7 +354,6 @@ def main(args):
         "train_losses": np.array(train_losses, dtype=float).tolist(),
         "val_losses": np.array(val_losses, dtype=float).tolist(),
         "val_paucs": val_paucs,
-        "val_paucs_aus": val_paucs_aus,
         "val_aucs": val_aucs,
     }
     with open(f"{args.model_dir}/models/fold_{args.fold}/metadata.json", "w") as f:

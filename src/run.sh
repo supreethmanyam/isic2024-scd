@@ -1,25 +1,13 @@
 modal run -d isic2024_scd_app.py::download_data
 
 modal run -d isic2024_scd_app.py::pretrain --model-name efficientnet_b2 --version v1 --fold 1
-#Link: https://modal.com/apps/supreethmanyam/main/ap-ofhCBzGAqJ5dfhyqrhZaKs
+#Link: https://modal.com/apps/supreethmanyam/main/ap-RT9OJAnhIbPGn76kJHwrA5
 modal run -d isic2024_scd_app.py::pretrain --model-name efficientnet_b2 --version v1 --fold 2
-#Link: https://modal.com/apps/supreethmanyam/main/ap-MFOH192jSbWwUISPAVgnZI
+#Link: https://modal.com/apps/supreethmanyam/main/ap-O3lsII9jr9KRtfC1RD8XT6
 modal run -d isic2024_scd_app.py::pretrain --model-name efficientnet_b2 --version v1 --fold 3
-#Link: https://modal.com/apps/supreethmanyam/main/ap-B1gWM8C8QWwU3fjqlX8X2h
+#Link: https://modal.com/apps/supreethmanyam/main/ap-GzJcU9GdfVEx0s7EwkCJSc
 modal run -d isic2024_scd_app.py::pretrain --model-name efficientnet_b2 --version v1 --fold 4
-#Link: https://modal.com/apps/supreethmanyam/main/ap-UCZFe19943eDlbimoY3qK9
+#Link: https://modal.com/apps/supreethmanyam/main/ap-o8elgg5fLjhBZ1qtcaJltv
 modal run -d isic2024_scd_app.py::pretrain --model-name efficientnet_b2 --version v1 --fold 5
-#Link: https://modal.com/apps/supreethmanyam/main/ap-BpE48RPEwWwH6QCaTr6wKm
+#Link: https://modal.com/apps/supreethmanyam/main/ap-j4aI5r7ThqhpuFTWTolLhI
 modal run -d isic2024_scd_app.py::upload_weights --model-name efficientnet_b2 --version v1 --mode pretrain
-
-modal run -d isic2024_scd_app.py::pretrain --model-name efficientnet_b3 --version v1 --fold 1
-#Link: https://modal.com/apps/supreethmanyam/main/ap-kR8db7O37bRU7Q1QtXdKJK
-modal run -d isic2024_scd_app.py::pretrain --model-name efficientnet_b3 --version v1 --fold 2
-#Link: https://modal.com/apps/supreethmanyam/main/ap-ZVU5pThOj0SdqwX6ifKDCL
-modal run -d isic2024_scd_app.py::pretrain --model-name efficientnet_b3 --version v1 --fold 3
-#Link: https://modal.com/apps/supreethmanyam/main/ap-IUFesHrcU9jKwzQJXCYaGK
-modal run -d isic2024_scd_app.py::pretrain --model-name efficientnet_b3 --version v1 --fold 4
-#Link: https://modal.com/apps/supreethmanyam/main/ap-BNOyNQVqgHZAVfZ9DPuDcZ
-modal run -d isic2024_scd_app.py::pretrain --model-name efficientnet_b3 --version v1 --fold 5
-#Link: https://modal.com/apps/supreethmanyam/main/ap-MIppc8foWZjgMuHbcapkPT
-modal run -d isic2024_scd_app.py::upload_weights --model-name efficientnet_b3 --version v1 --mode pretrain

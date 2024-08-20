@@ -1,5 +1,5 @@
 from io import BytesIO
-
+from typing import List
 import albumentations as A
 import h5py
 import numpy as np
@@ -8,6 +8,80 @@ import torch
 from albumentations.pytorch import ToTensorV2
 from PIL import Image
 from torch.utils.data import Dataset
+from utils import logger
+
+
+feature_mapping_dict = {
+    "age_approx": {
+        "missing_age_approx": 0,
+        "5.0": 1,
+        "15.0": 2,
+        "20.0": 3,
+        "25.0": 4,
+        "30.0": 5,
+        "35.0": 6,
+        "40.0": 7,
+        "45.0": 8,
+        "50.0": 9,
+        "55.0": 10,
+        "60.0": 11,
+        "65.0": 12,
+        "70.0": 13,
+        "75.0": 14,
+        "80.0": 15,
+        "85.0": 16,
+    },
+    "sex": {
+        "missing_sex": 0,
+        "female": 1,
+        "male": 2,
+    },
+    "anatom_site_general": {
+        "missing_anatom_site_general": 0,
+        "lower extremity": 1,
+        "head/neck": 2,
+        "posterior torso": 3,
+        "anterior torso": 4,
+        "upper extremity": 5,
+    },
+    "tbp_tile_type": {
+        "3D: white": 0,
+        "3D: XP": 1,
+    },
+    "tbp_lv_location": {
+        "Right Leg - Upper": 0,
+        "Head & Neck": 1,
+        "Torso Back Top Third": 2,
+        "Torso Front Top Half": 3,
+        "Right Arm - Upper": 4,
+        "Left Leg - Upper": 5,
+        "Torso Front Bottom Half": 6,
+        "Left Arm - Upper": 7,
+        "Right Leg": 8,
+        "Torso Back Middle Third": 9,
+        "Right Arm - Lower": 10,
+        "Right Leg - Lower": 11,
+        "Left Leg - Lower": 12,
+        "Left Arm - Lower": 13,
+        "Unknown": 14,
+        "Left Leg": 15,
+        "Torso Back Bottom Third": 16,
+        "Left Arm": 17,
+        "Right Arm": 18,
+        "Torso Front": 19,
+        "Torso Back": 20
+    },
+    "tbp_lv_location_simple": {
+        "Right Leg": 0,
+        "Head & Neck": 1,
+        "Torso Back": 2,
+        "Torso Front": 3,
+        "Right Arm": 4,
+        "Left Leg": 5,
+        "Left Arm": 6,
+        "Unknown": 7
+    }
+}
 
 
 def dev_augment(image_size, mean=None, std=None):
@@ -86,10 +160,15 @@ def test_augment(image_size, mean=None, std=None):
 
 
 class ISICDataset(Dataset):
-    def __init__(self, metadata, images, augment, infer=False):
+    def __init__(self, metadata, images, augment,
+                 use_meta=False, cat_cols: List = None, cont_cols: List = None,
+                 infer=False):
         self.metadata = metadata
         self.images = images
         self.augment = augment
+        self.use_meta = use_meta
+        self.cat_cols = cat_cols
+        self.cont_cols = cont_cols
         self.length = len(self.metadata)
         self.infer = infer
 
@@ -101,11 +180,82 @@ class ISICDataset(Dataset):
         image = np.array(Image.open(BytesIO(self.images[row["isic_id"]][()])))
         if self.augment is not None:
             image = self.augment(image=image)["image"].float()
+
+        if self.use_meta:
+            x_cat = torch.tensor([row[col] for col in self.cat_cols], dtype=torch.long)
+            x_cont = torch.tensor([row[col] for col in self.cont_cols], dtype=torch.float)
+        else:
+            x_cat = torch.tensor(0)
+            x_cont = torch.tensor(0)
+
         if self.infer:
-            return image
+            return image, x_cat, x_cont
         else:
             target = torch.tensor(row["target"])
-            return image, target
+            return image, x_cat, x_cont, target
+
+
+def preprocess(df):
+    df["age_approx"] = df["age_approx"].fillna("missing_age_approx").astype(str)
+    df["age_approx"] = df["age_approx"].map(feature_mapping_dict["age_approx"])
+    df["sex"] = df["sex"].fillna("missing_sex")
+    df["sex"] = df["sex"].map(feature_mapping_dict["sex"])
+    df["anatom_site_general"] = df["anatom_site_general"].fillna("missing_anatom_site_general")
+    df["anatom_site_general"] = df["anatom_site_general"].map(feature_mapping_dict["anatom_site_general"])
+    df["tbp_tile_type"] = df["tbp_tile_type"].map(feature_mapping_dict["tbp_tile_type"])
+    df["tbp_lv_location"] = df["tbp_lv_location"].map(feature_mapping_dict["tbp_lv_location"])
+    df["tbp_lv_location_simple"] = df["tbp_lv_location_simple"].map(feature_mapping_dict["tbp_lv_location_simple"])
+    return df
+
+
+def get_emb_szs(cat_cols):
+    emb_szs = {}
+    for col in cat_cols:
+        emb_szs[col] = (len(feature_mapping_dict[col]), min(600, round(1.6 * len(feature_mapping_dict[col]) ** 0.56)))
+    return emb_szs
+
+
+def norm_feature(df, value_col, group_cols, err=1e-5):
+    stats = ["mean", "std"]
+    tmp = df.groupby(group_cols)[value_col].agg(stats)
+    tmp.columns = [f"{value_col}_{stat}" for stat in stats]
+    tmp.reset_index(inplace=True)
+    df = df.merge(tmp, on=group_cols, how="left")
+    feature_name = f"{value_col}_patient_norm"
+    df[feature_name] = ((df[value_col] - df[f"{value_col}_mean"]) / (df[f"{value_col}_std"] + err))
+    return df, feature_name
+
+
+def feature_engineering(df):
+    cat_cols = ["age_approx", "sex", "anatom_site_general",
+                "tbp_tile_type", "tbp_lv_location", "tbp_lv_location_simple"]
+    cont_cols = ["clin_size_long_diam_mm",
+                 "tbp_lv_A", "tbp_lv_Aext",
+                 "tbp_lv_B", "tbp_lv_Bext",
+                 "tbp_lv_C", "tbp_lv_Cext",
+                 "tbp_lv_H", "tbp_lv_Hext",
+                 "tbp_lv_L", "tbp_lv_Lext",
+                 "tbp_lv_areaMM2", "tbp_lv_area_perim_ratio",
+                 "tbp_lv_color_std_mean",
+                 # "tbp_lv_deltaA", "tbp_lv_deltaB", "tbp_lv_deltaL", "tbp_lv_deltaLB", "tbp_lv_deltaLBnorm",
+                 "tbp_lv_eccentricity",
+                 "tbp_lv_minorAxisMM", "tbp_lv_nevi_confidence", "tbp_lv_norm_border",
+                 "tbp_lv_norm_color", "tbp_lv_perimeterMM",
+                 "tbp_lv_radial_color_std_max", "tbp_lv_stdL", "tbp_lv_stdLExt",
+                 "tbp_lv_symm_2axis", "tbp_lv_symm_2axis_angle",
+                 # "tbp_lv_x", "tbp_lv_y", "tbp_lv_z"
+                 ]
+
+    # for col in cont_cols:
+    #     df, feature_name = norm_feature(df, col, ["patient_id"])
+    #     cont_cols.append(feature_name)
+    df["num_images"] = df["patient_id"].map(df.groupby("patient_id")["isic_id"].count())
+    cont_cols.append("num_images")
+
+    for col in cont_cols:
+        min_value = min(0, df[col].min())
+        df[col] = np.log(df[col] - min_value + 1)
+    return df, cat_cols, cont_cols
 
 
 def get_data(data_dir):
@@ -116,4 +266,12 @@ def get_data(data_dir):
     train_metadata = train_metadata.merge(
         folds_df, on=["isic_id", "patient_id"], how="inner"
     )
-    return train_metadata, train_images
+
+    logger.info(f"Preprocessing metadata...")
+    train_metadata = preprocess(train_metadata)
+
+    logger.info(f"Feature engineering...")
+    train_metadata, cat_cols, cont_cols = feature_engineering(train_metadata)
+
+    emb_szs = get_emb_szs(cat_cols)
+    return train_metadata, train_images, cat_cols, cont_cols, emb_szs
