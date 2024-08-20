@@ -9,8 +9,12 @@ from modal import App, Image, Mount, Secret, Volume
 
 GPU_CONFIG = os.environ.get("GPU_CONFIG", "a10g:1")
 app = App(name="isic2024-scd", secrets=[Secret.from_name("kaggle-api-token")])
+cuda_version = "12.6.0"
+flavor = "devel"
+os = "ubuntu24.04"
+tag = f"{cuda_version}-{flavor}-{os}"
 image = (
-    Image.debian_slim(python_version="3.10")
+    Image.from_registry(f"nvidia/cuda:{tag}", add_python="3.10")
     .poetry_install_from_file(
         poetry_pyproject_toml="../pyproject.toml",
         poetry_lockfile="../poetry.lock",
@@ -20,6 +24,9 @@ image = (
         "apt-get update",
         # Required to install libs such as libGL.so.1
         "apt-get install ffmpeg libsm6 libxext6 tree --yes",
+        "pip install -U pip",
+        "pip install setuptools wheel packaging",
+        "pip install mamba-ssm --no-use-pep517",
     )
 )
 
@@ -32,6 +39,7 @@ INPUT_DIR = Path("/kaggle/input")
 
 def setup_kaggle():
     import subprocess
+    import os
 
     kaggle_api_token_data = os.environ["KAGGLE_API_TOKEN"]
     kaggle_token_filepath = Path.home() / ".config" / "kaggle" / "kaggle.json"

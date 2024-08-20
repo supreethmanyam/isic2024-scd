@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from timm import create_model
+from medmamba import VSSM
 
 
 class ISICNet(nn.Module):
@@ -14,14 +15,18 @@ class ISICNet(nn.Module):
         cat_cols: List = None, cont_cols: List = None, emb_szs: Dict = None,
     ):
         super(ISICNet, self).__init__()
-        self.model = create_model(
-            model_name=model_name,
-            pretrained=pretrained,
-            in_chans=3,
-            num_classes=0,
-            global_pool="",
-        )
-        in_dim = self.model.num_features
+        if model_name == "medmamba":
+            self.model = VSSM()
+            in_dim = 768
+        else:
+            self.model = create_model(
+                model_name=model_name,
+                pretrained=pretrained,
+                in_chans=3,
+                num_classes=0,
+                global_pool="",
+            )
+            in_dim = self.model.num_features
         self.dropouts = nn.ModuleList([nn.Dropout(0.5) for _ in range(5)])
         self.use_meta = use_meta
         if use_meta:
