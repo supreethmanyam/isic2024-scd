@@ -3,7 +3,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from timm import create_model
-from medmamba import VSSM
 
 
 class ISICNet(nn.Module):
@@ -15,22 +14,18 @@ class ISICNet(nn.Module):
         cat_cols: List = None, cont_cols: List = None, emb_szs: Dict = None,
     ):
         super(ISICNet, self).__init__()
-        if model_name == "medmamba":
-            self.model = VSSM()
-            in_dim = 768
-        else:
-            self.model = create_model(
-                model_name=model_name,
-                pretrained=pretrained,
-                in_chans=3,
-                num_classes=0,
-                global_pool="",
-            )
-            in_dim = self.model.num_features
+        self.model = create_model(
+            model_name=model_name,
+            pretrained=pretrained,
+            in_chans=3,
+            num_classes=0,
+            global_pool="",
+        )
+        in_dim = self.model.num_features
         self.dropouts = nn.ModuleList([nn.Dropout(0.5) for _ in range(5)])
         self.use_meta = use_meta
         if use_meta:
-            self.linear = nn.Linear(in_dim, 512)
+            self.linear = nn.Linear(in_dim, 256)
 
             self.embeddings = nn.ModuleList([nn.Embedding(emb_szs[col][0], emb_szs[col][1]) for col in cat_cols])
             self.embedding_dropout = nn.Dropout(0.1)
@@ -38,16 +33,16 @@ class ISICNet(nn.Module):
             n_cont = len(cont_cols)
             self.bn_cont = nn.BatchNorm1d(n_cont)
             self.meta = nn.Sequential(
-                nn.Linear(n_emb + n_cont, 512),
-                nn.BatchNorm1d(512),
+                nn.Linear(n_emb + n_cont, 256),
+                nn.BatchNorm1d(256),
                 nn.SiLU(),
                 nn.Dropout(0.3),
-                nn.Linear(512, 128),
-                nn.BatchNorm1d(128),
+                nn.Linear(256, 64),
+                nn.BatchNorm1d(64),
                 nn.SiLU(),
                 nn.Dropout(0.1),
             )
-            self.classifier = nn.Linear(512 + 128, 1)
+            self.classifier = nn.Linear(256 + 64, 1)
         else:
             self.linear = nn.Linear(in_dim, 1)
 

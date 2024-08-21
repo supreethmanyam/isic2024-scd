@@ -9,78 +9,60 @@ from albumentations.pytorch import ToTensorV2
 from PIL import Image
 from torch.utils.data import Dataset
 from utils import logger
+from collections import defaultdict
 
 
 feature_mapping_dict = {
-    "age_approx": {
-        "missing_age_approx": 0,
-        "5.0": 1,
-        "15.0": 2,
-        "20.0": 3,
-        "25.0": 4,
-        "30.0": 5,
-        "35.0": 6,
-        "40.0": 7,
-        "45.0": 8,
-        "50.0": 9,
-        "55.0": 10,
-        "60.0": 11,
-        "65.0": 12,
-        "70.0": 13,
-        "75.0": 14,
-        "80.0": 15,
-        "85.0": 16,
-    },
-    "sex": {
+    "sex": defaultdict(lambda: 0, {
         "missing_sex": 0,
         "female": 1,
         "male": 2,
-    },
-    "anatom_site_general": {
+    }),
+    "anatom_site_general": defaultdict(lambda: 0, {
         "missing_anatom_site_general": 0,
         "lower extremity": 1,
         "head/neck": 2,
         "posterior torso": 3,
         "anterior torso": 4,
         "upper extremity": 5,
-    },
-    "tbp_tile_type": {
+    }),
+    "tbp_tile_type": defaultdict(lambda: 0, {
         "3D: white": 0,
         "3D: XP": 1,
-    },
-    "tbp_lv_location": {
-        "Right Leg - Upper": 0,
-        "Head & Neck": 1,
-        "Torso Back Top Third": 2,
-        "Torso Front Top Half": 3,
-        "Right Arm - Upper": 4,
-        "Left Leg - Upper": 5,
-        "Torso Front Bottom Half": 6,
-        "Left Arm - Upper": 7,
-        "Right Leg": 8,
-        "Torso Back Middle Third": 9,
-        "Right Arm - Lower": 10,
-        "Right Leg - Lower": 11,
-        "Left Leg - Lower": 12,
-        "Left Arm - Lower": 13,
-        "Unknown": 14,
+    }),
+    "tbp_lv_location": defaultdict(lambda: 0, {
+        "Unknown": 0,
+        "Right Leg - Upper": 1,
+        "Head & Neck": 2,
+        "Torso Back Top Third": 3,
+        "Torso Front Top Half": 4,
+        "Right Arm - Upper": 5,
+        "Left Leg - Upper": 6,
+        "Torso Front Bottom Half": 7,
+        "Left Arm - Upper": 8,
+        "Right Leg": 9,
+        "Torso Back Middle Third": 10,
+        "Right Arm - Lower": 11,
+        "Right Leg - Lower": 12,
+        "Left Leg - Lower": 13,
+        "Left Arm - Lower": 14,
         "Left Leg": 15,
         "Torso Back Bottom Third": 16,
         "Left Arm": 17,
         "Right Arm": 18,
         "Torso Front": 19,
         "Torso Back": 20
-    },
-    "tbp_lv_location_simple": {
-        "Right Leg": 0,
-        "Head & Neck": 1,
-        "Torso Back": 2,
-        "Torso Front": 3,
-        "Right Arm": 4,
-        "Left Leg": 5,
-        "Left Arm": 6,
-        "Unknown": 7
-    }
+    }),
+    "tbp_lv_location_simple": defaultdict(lambda: 0, {
+        "Unknown": 0,
+        "Right Leg": 1,
+        "Head & Neck": 2,
+        "Torso Back": 3,
+        "Torso Front": 4,
+        "Right Arm": 5,
+        "Left Leg": 6,
+        "Left Arm": 7,
+    }),
 }
 
 
@@ -196,8 +178,8 @@ class ISICDataset(Dataset):
 
 
 def preprocess(df):
-    df["age_approx"] = df["age_approx"].fillna("missing_age_approx").astype(str)
-    df["age_approx"] = df["age_approx"].map(feature_mapping_dict["age_approx"])
+    df["age_approx"] = df["age_approx"].fillna(0)
+    df["age_approx"] = df["age_approx"] / 90
     df["sex"] = df["sex"].fillna("missing_sex")
     df["sex"] = df["sex"].map(feature_mapping_dict["sex"])
     df["anatom_site_general"] = df["anatom_site_general"].fillna("missing_anatom_site_general")
@@ -227,9 +209,10 @@ def norm_feature(df, value_col, group_cols, err=1e-5):
 
 
 def feature_engineering(df):
-    cat_cols = ["age_approx", "sex", "anatom_site_general",
+    cat_cols = ["sex", "anatom_site_general",
                 "tbp_tile_type", "tbp_lv_location", "tbp_lv_location_simple"]
-    cont_cols = ["clin_size_long_diam_mm",
+    cont_cols = ["age_approx",
+                 "clin_size_long_diam_mm",
                  "tbp_lv_A", "tbp_lv_Aext",
                  "tbp_lv_B", "tbp_lv_Bext",
                  "tbp_lv_C", "tbp_lv_Cext",
@@ -253,8 +236,8 @@ def feature_engineering(df):
     cont_cols.append("num_images")
 
     for col in cont_cols:
-        min_value = min(0, df[col].min())
-        df[col] = np.log(df[col] - min_value + 1)
+        df[col] = np.log(df[col] + 30)
+        df[col] = df[col].fillna(0)
     return df, cat_cols, cont_cols
 
 

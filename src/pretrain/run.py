@@ -25,7 +25,6 @@ from models import ISICNet
 from torch.utils.data import DataLoader, RandomSampler
 from imblearn.under_sampling import RandomUnderSampler
 from utils import logger
-from medmamba import VSSM
 
 
 def parse_args(input_args=None):
