@@ -1,3 +1,4 @@
+import os
 import argparse
 import json
 import logging
@@ -129,6 +130,9 @@ def parse_args(input_args=None):
 
 
 def main(args):
+
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+
     logging_dir = Path(args.model_dir, args.logging_dir)
     accelerator_project_config = ProjectConfiguration(
         project_dir=args.model_dir, logging_dir=str(logging_dir)
@@ -148,7 +152,7 @@ def main(args):
     logger.info(accelerator.state, main_process_only=False)
 
     if args.seed is not None:
-        set_seed(args.seed)
+        set_seed(args.seed, deterministic=True)
 
     train_metadata, train_images, cat_cols, cont_cols, emb_szs = get_data(args.data_dir)
 
