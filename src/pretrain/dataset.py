@@ -229,9 +229,6 @@ def feature_engineering(df):
                  # "tbp_lv_x", "tbp_lv_y", "tbp_lv_z"
                  ]
 
-    # for col in cont_cols:
-    #     df, feature_name = norm_feature(df, col, ["patient_id"])
-    #     cont_cols.append(feature_name)
     df["num_images"] = df["patient_id"].map(df.groupby("patient_id")["isic_id"].count())
     cont_cols.append("num_images")
 
