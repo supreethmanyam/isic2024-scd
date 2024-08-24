@@ -121,6 +121,38 @@ external_data_mapping = {
 }
 
 
+def download_external_data_from_kaggle(year: str, recreate: bool = False):
+    import subprocess
+
+    path = external_data_mapping[year]["path"]
+    required_files = [
+        "train-image.hdf5",
+        "train-metadata.csv",
+    ]
+    existing_files = set(file.name for file in path.iterdir())
+    if (
+        not recreate
+        and len(existing_files) > 0
+        and set(required_files) <= existing_files
+    ):
+        print(f"External dataset {year} is loaded ✅")
+    else:
+        # Download external dataset
+        subprocess.run(
+            f"kaggle datasets download isic-{year}-challenge --path {path}",
+            shell=True,
+            check=True,
+        )
+        # Extract external dataset
+        filepath = path / f"isic-{year}-challenge.zip"
+        print(f"Extracting .zip into {path}...")
+        extract(filepath, path, allowed_extensions=(".hdf5", ".csv"))
+        print(f"Extracted {filepath} to {path}")
+        subprocess.run(f"tree -L 3 {path} -I '*.jpg'", shell=True, check=True)
+        input_volume.commit()
+        print(f"Downloaded external dataset {year} from kaggle ✅")
+
+
 def center_crop_and_resize(img, resize_to):
     from PIL import Image as PILImage
 
@@ -136,6 +168,7 @@ def center_crop_and_resize(img, resize_to):
 
 
 def process_file(file):
+    import os
     import numpy as np
     from PIL import Image as PILImage
 
@@ -216,15 +249,21 @@ def download_external_data(year: str, recreate: bool = False):
     volumes={str(INPUT_DIR): input_volume},
     timeout=60 * 60 * 6,  # 6 hours
 )
-def download_data(ext: str = "", recreate: bool = False):
+def download_data(ext: str = "", recreate: bool = False, from_kaggle: bool = True):
     setup_kaggle()
     data_dir = INPUT_DIR / "isic-2024-challenge"
     data_dir.mkdir(parents=True, exist_ok=True)
     download_competition_data(data_dir)
     if "2020" in ext:
-        download_external_data("2020", recreate)
+        if from_kaggle:
+            download_external_data_from_kaggle("2020", recreate)
+        else:
+            download_external_data("2020", recreate)
     if "2019" in ext:
-        download_external_data("2019", recreate)
+        if from_kaggle:
+            download_external_data_from_kaggle("2019", recreate)
+        else:
+            download_external_data("2019", recreate)
     input_volume.commit()
 
 
@@ -302,25 +341,21 @@ class PreTrainConfig:
 
 
 @dataclass
-class FinetuneConfig:
+class TrainConfig:
+    mode: str = "pretrain"
     mixed_precision: bool = "fp16"
-    image_size: int = 64
+    image_size: int = 128
     train_batch_size: int = 64
     val_batch_size: int = 512
     num_workers: int = 8
-    init_lr: float = 8e-5
+    init_lr: float = 3e-5
     num_epochs: int = 20
     n_tta: int = 8
-    fold_method: str = "gkf"
+    down_sampling: bool = True
+    use_meta: bool = True
     seed: int = 2022
 
-    sampling_rate: float = 0.1
-    tau: float = 0.1
-    Lambda: float = 1.0
-    gamma0: float = 0.5
-    gamma1: float = 0.5
-    margin: float = 1.0
-
+    ext: str = "2020,2019"
     debug: bool = False
 
 
@@ -404,13 +439,13 @@ def pretrain(model_name: str, version: str, fold: int):
 
 @app.function(
     image=image,
-    mounts=[mount_folder("finetune")],
+    mounts=[mount_folder("train")],
     volumes={str(INPUT_DIR): input_volume, str(WEIGHTS_DIR): weights_volume},
     gpu=GPU_CONFIG,
     timeout=60 * 60 * 24,  # 24 hours
-    cpu=FinetuneConfig.num_workers,
+    cpu=TrainConfig.num_workers,
 )
-def finetune(model_name: str, version: str, fold: int):
+def train(model_name: str, version: str, fold: int):
     import json
     import subprocess
     from pprint import pprint
@@ -433,18 +468,25 @@ def finetune(model_name: str, version: str, fold: int):
             raise subprocess.CalledProcessError(exitcode, "\n".join(cmd))
 
     setup_kaggle()
-    config = FinetuneConfig()
+    config = TrainConfig()
     print(f"Running with config:")
     pprint(config.__dict__)
     metadata = {"params": config.__dict__}
-    model_identifier = f"{model_name}_{version}_finetune"
+    model_identifier = f"{model_name}_{version}_train"
     model_dir = Path(WEIGHTS_DIR) / model_identifier
     model_dir.mkdir(parents=True, exist_ok=True)
-    pretrained_model_dir = Path(WEIGHTS_DIR) / f"{model_name}_{version}_pretrain"
     with open(model_dir / f"{model_name}_{version}_run_metadata.json", "w") as f:
         json.dump(metadata, f)
 
     data_dir = INPUT_DIR / "isic-2024-challenge"
+    if "2020" in config.ext:
+        data_2020_dir = external_data_mapping["2020"]["path"]
+    else:
+        data_2020_dir = ""
+    if "2019" in config.ext:
+        data_2019_dir = external_data_mapping["2019"]["path"]
+    else:
+        data_2019_dir = ""
 
     write_basic_config(mixed_precision=config.mixed_precision)
     print("Launching training script")
@@ -452,14 +494,14 @@ def finetune(model_name: str, version: str, fold: int):
         [
             "accelerate",
             "launch",
-            "finetune/run.py",
+            "train/run.py",
             f"--model_name={model_name}",
             f"--version={version}",
-            f"--pretrained_model_dir={pretrained_model_dir}",
             f"--model_dir={model_dir}",
             f"--data_dir={data_dir}",
-            f"--fold_method={config.fold_method}",
         ]
+        + (["--data_2020_dir", data_2020_dir] if data_2020_dir else [])
+        + (["--data_2019_dir", data_2019_dir] if data_2019_dir else [])
         + [
             f"--fold={fold}",
         ]
@@ -470,16 +512,12 @@ def finetune(model_name: str, version: str, fold: int):
             f"--val_batch_size={config.val_batch_size}",
             f"--num_workers={config.num_workers}",
             f"--init_lr={config.init_lr}",
-            f"--sampling_rate={config.sampling_rate}",
-            f"--tau={config.tau}",
-            f"--Lambda={config.Lambda}",
-            f"--gamma0={config.gamma0}",
-            f"--gamma1={config.gamma1}",
-            f"--margin={config.margin}",
             f"--num_epochs={config.num_epochs}",
             f"--n_tta={config.n_tta}",
             f"--seed={config.seed}",
         ]
+        + (["--use_meta"] if config.use_meta else [])
+        + (["--down_sampling"] if config.down_sampling else [])
         + (["--debug"] if config.debug else [])
     )
     print(subprocess.list2cmdline(commands))
@@ -489,7 +527,7 @@ def finetune(model_name: str, version: str, fold: int):
 
 @app.function(
     image=image,
-    mounts=[mount_folder("pretrain"), mount_folder("finetune")],
+    mounts=[mount_folder("pretrain"), mount_folder("train")],
     volumes={str(WEIGHTS_DIR): weights_volume},
     timeout=60 * 60,  # 1 hour
 )
@@ -506,8 +544,8 @@ def upload_weights(model_name: str, version: str, mode: str | None = None):
 
     setup_kaggle()
 
-    if mode not in ["pretrain", "finetune"]:
-        raise ValueError("Value of mode must be one of ['pretrain', 'finetune']")
+    if mode not in ["pretrain", "train"]:
+        raise ValueError("Value of mode must be one of ['pretrain', 'train']")
     model_identifier = f"{model_name}_{version}_{mode}"
     model_dir = Path(WEIGHTS_DIR) / model_identifier
 
