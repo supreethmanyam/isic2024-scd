@@ -42,68 +42,6 @@ binary_target_mapping_dict = {
         "solar lentigo": 0,
     },
 }
-multi_target_mapping_dict = {
-    "2024": {
-        "Hidradenoma": "unknown",
-        "Lichen planus like keratosis": "BKL",
-        "Pigmented benign keratosis": "BKL",
-        "Seborrheic keratosis": "BKL",
-        "Solar lentigo": "BKL",
-        "Nevus": "NV",
-        "Angiofibroma": "unknown",
-        "Dermatofibroma": "DF",
-        "Fibroepithelial polyp": "unknown",
-        "Scar": "unknown",
-        "Hemangioma": "unknown",
-        "Trichilemmal or isthmic-catagen or pilar cyst": "unknown",
-        "Lentigo NOS": "BKL",
-        "Verruca": "unknown",
-        "Solar or actinic keratosis": "AKIEC",
-        "Atypical intraepithelial melanocytic proliferation": "unknown",
-        "Atypical melanocytic neoplasm": "unknown",
-        "Basal cell carcinoma": "BCC",
-        "Squamous cell carcinoma in situ": "SCC",
-        "Squamous cell carcinoma, Invasive": "SCC",
-        "Squamous cell carcinoma, NOS": "SCC",
-        "Melanoma in situ": "MEL",
-        "Melanoma Invasive": "MEL",
-        "Melanoma metastasis": "MEL",
-        "Melanoma, NOS": "MEL",
-    },
-    "2020": {
-        "nevus": "NV",
-        "melanoma": "MEL",
-        "seborrheic keratosis": "BKL",
-        "lentigo NOS": "BKL",
-        "lichenoid keratosis": "BKL",
-        "other": "unknown",
-        "solar lentigo": "BKL",
-        "scar": "unknown",
-        "cafe-au-lait macule": "unknown",
-        "atypical melanocytic proliferation": "unknown",
-        "pigmented benign keratosis": "BKL",
-    },
-    "2019": {
-        "nevus": "NV",
-        "melanoma": "MEL",
-        "seborrheic keratosis": "BKL",
-        "pigmented benign keratosis": "BKL",
-        "dermatofibroma": "DF",
-        "squamous cell carcinoma": "SCC",
-        "basal cell carcinoma": "BCC",
-        "vascular lesion": "VASC",
-        "actinic keratosis": "AKIEC",
-        "solar lentigo": "BKL",
-    },
-}
-all_labels = np.unique(
-    list(multi_target_mapping_dict["2024"].values())
-    + list(multi_target_mapping_dict["2020"].values())
-    + list(multi_target_mapping_dict["2019"].values())
-)
-label2idx = {label: idx for idx, label in enumerate(all_labels)}
-malignant_labels = ["BCC", "MEL", "SCC"]
-malignant_idx = [label2idx[label] for label in malignant_labels]
 
 
 def dev_augment_v1(image_size, mean=None, std=None):
@@ -213,7 +151,7 @@ class ISICDatasetV1(Dataset):
         if self.infer:
             return image, x_cat, x_cont
         else:
-            target = torch.tensor(row["label"])
+            target = torch.tensor(row["target"])
             return image, x_cat, x_cont, target
 
 
@@ -254,12 +192,6 @@ def get_data_v1(data_dir, data_2020_dir, data_2019_dir):
     train_metadata, cat_cols, cont_cols = feature_engineering_v1(train_metadata)
     emb_szs = get_emb_szs_v1(cat_cols)
 
-    train_metadata["label"] = train_metadata["iddx_3"].fillna("unknown")
-    train_metadata["label"] = train_metadata["label"].replace(
-        multi_target_mapping_dict["2024"]
-    )
-    train_metadata["label"] = train_metadata["label"].map(label2idx)
-
     if data_2020_dir is not None:
         train_metadata_2020 = pd.read_csv(f"{data_2020_dir}/train-metadata.csv", low_memory=False)
         train_images_2020 = h5py.File(f"{data_2020_dir}/train-image.hdf5", mode="r")
@@ -267,13 +199,6 @@ def get_data_v1(data_dir, data_2020_dir, data_2019_dir):
         train_metadata_2020 = preprocess_v1(train_metadata_2020)
         train_metadata_2020, _, _ = feature_engineering_v1(train_metadata_2020)
 
-        train_metadata_2020["label"] = train_metadata_2020["diagnosis"].fillna(
-            "unknown"
-        )
-        train_metadata_2020["label"] = train_metadata_2020["label"].replace(
-            multi_target_mapping_dict["2020"]
-        )
-        train_metadata_2020["label"] = train_metadata_2020["label"].map(label2idx)
         train_metadata_2020["target"] = train_metadata_2020["benign_malignant"].map(
             binary_target_mapping_dict["2020"]
         ).astype(int)
@@ -288,10 +213,6 @@ def get_data_v1(data_dir, data_2020_dir, data_2019_dir):
         train_metadata_2019 = preprocess_v1(train_metadata_2019)
         train_metadata_2019, _, _ = feature_engineering_v1(train_metadata_2019)
 
-        train_metadata_2019["label"] = train_metadata_2019["diagnosis"].replace(
-            multi_target_mapping_dict["2019"]
-        )
-        train_metadata_2019["label"] = train_metadata_2019["label"].map(label2idx)
         train_metadata_2019["target"] = train_metadata_2019["diagnosis"].map(
             binary_target_mapping_dict["2019"]
         ).astype(int)

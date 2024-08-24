@@ -258,8 +258,8 @@ def main(args):
         emb_szs=emb_szs,
     )
     model = model.to(accelerator.device)
-    criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.init_lr, weight_decay=1e-4)
+    criterion = nn.BCELoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.init_lr)
     lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
         pct_start=1 / args.num_epochs,

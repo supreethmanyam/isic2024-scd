@@ -342,7 +342,7 @@ class PreTrainConfig:
 
 @dataclass
 class TrainConfig:
-    mode: str = "pretrain"
+    mode: str = "train"
     mixed_precision: bool = "fp16"
     image_size: int = 128
     train_batch_size: int = 64

@@ -3,7 +3,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from timm import create_model
-from dataset import all_labels
 
 
 class ISICNetV1(nn.Module):
@@ -34,18 +33,18 @@ class ISICNetV1(nn.Module):
             n_cont = len(cont_cols)
             self.bn_cont = nn.BatchNorm1d(n_cont)
             self.meta = nn.Sequential(
-                nn.Linear(n_emb + n_cont, 128),
-                nn.BatchNorm1d(128),
+                nn.Linear(n_emb + n_cont, 256),
+                nn.BatchNorm1d(256),
                 nn.SiLU(),
                 nn.Dropout(0.3),
-                nn.Linear(128, 16),
-                nn.BatchNorm1d(16),
+                nn.Linear(256, 64),
+                nn.BatchNorm1d(64),
                 nn.SiLU(),
                 nn.Dropout(0.1),
             )
-            self.classifier = nn.Linear(256 + 16, len(all_labels))
+            self.classifier = nn.Linear(256 + 64, 1)
         else:
-            self.linear = nn.Linear(in_dim, len(all_labels))
+            self.linear = nn.Linear(in_dim, 1)
 
     def forward(self, images, x_cat=None, x_cont=None):
         x = self.model(images)
