@@ -355,7 +355,7 @@ class TrainConfig:
     use_meta: bool = True
     seed: int = 2022
 
-    ext: str = "2020,2019"
+    ext: str = ""
     debug: bool = False
 
 
