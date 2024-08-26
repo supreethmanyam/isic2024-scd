@@ -77,20 +77,26 @@ def val_epoch(
     total_steps = len(val_dataloader)
     with torch.no_grad():
         for step, (images, x_cat, x_cont, targets) in enumerate(val_dataloader):
-            logits = 0
-            probs = 0
+            logits = None
+            probs = None
             for i in range(n_tta):
                 if use_meta:
                     logits_iter = model(get_trans(images, i), x_cat, x_cont)
                 else:
                     logits_iter = model(get_trans(images, i))
-                logits += logits_iter
-                probs += torch.sigmoid(logits_iter)
+                if logits is None:
+                    logits = logits_iter
+                    probs = torch.sigmoid(logits_iter)
+                else:
+                    logits += logits_iter
+                    probs += torch.sigmoid(logits_iter)
             logits /= n_tta
             probs /= n_tta
-
+            logger.info(probs[(probs < 0) | (probs > 1)])
+            # import sys
+            # sys.exit(1)
             targets = targets.float().unsqueeze(1)
-            loss = criterion(probs, targets)
+            loss = criterion(logits, targets)
             val_loss.append(loss.detach().cpu().numpy())
 
             probs, targets = accelerator.gather((probs, targets))
