@@ -132,8 +132,6 @@ def parse_args(input_args=None):
 def main(args):
 
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-    os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-    os.environ["TORCH_USE_CUDA_DSA"] = "1"
 
     logging_dir = Path(args.model_dir, args.logging_dir)
     accelerator_project_config = ProjectConfiguration(
@@ -156,7 +154,7 @@ def main(args):
     if args.seed is not None:
         set_seed(args.seed, deterministic=True)
 
-    train_metadata, train_images, cat_cols, cont_cols, emb_szs = get_data(args.data_dir)
+    train_metadata, train_images, cat_cols, cont_cols, emb_szs, stats_dict = get_data(args.data_dir)
 
     fold_column = "fold"
     dev_index = train_metadata[train_metadata[fold_column] != args.fold].index
@@ -217,8 +215,7 @@ def main(args):
         emb_szs=emb_szs,
     )
     model = model.to(accelerator.device)
-    # criterion = nn.BCELoss()
-    criterion = nn.BCEWithLogitsLoss()
+    criterion = nn.BCELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.init_lr)
     lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
@@ -249,50 +246,41 @@ def main(args):
     val_paucs = []
     val_aucs = []
     for epoch in range(1, args.num_epochs + 1):
-        if epoch != 8:
-            continue
-        logger.info(f"Fold {args.fold} | Epoch {epoch}")
-        accelerator.load_state(f"{args.model_dir}/models/fold_{args.fold}_epoch_8")
-        # start_time = time.time()
-        # if args.down_sampling:
-        #     rus = RandomUnderSampler(sampling_strategy={0: num_neg, 1: num_pos}, random_state=args.seed + (epoch * 100))
-        #     dev_metadata, _ = rus.fit_resample(dev_df, dev_df["target"])
-        #     dev_dataset = ISICDataset(
-        #         dev_metadata,
-        #         train_images,
-        #         augment=dev_augment(args.image_size, mean=mean, std=std),
-        #         use_meta=args.use_meta,
-        #         cat_cols=cat_cols,
-        #         cont_cols=cont_cols,
-        #         infer=False,
-        #     )
-        #     sampler = RandomSampler(dev_dataset)
-        #     dev_dataloader = DataLoader(
-        #         dev_dataset,
-        #         batch_size=args.train_batch_size,
-        #         sampler=sampler,
-        #         num_workers=args.num_workers,
-        #         pin_memory=True,
-        #     )
-        #     dev_dataloader = accelerator.prepare(dev_dataloader)
-        #
-        # lr = optimizer.param_groups[0]["lr"]
-        # logger.info(f"Fold {args.fold} | Epoch {epoch} | LR {lr:.7f}")
-        # train_loss = train_epoch(
-        #     epoch,
-        #     model,
-        #     optimizer,
-        #     criterion,
-        #     dev_dataloader,
-        #     lr_scheduler,
-        #     accelerator,
-        #     args.use_meta,
-        # )
-        # if epoch == 8:
-        #     output_dir = f"{args.model_dir}/models/fold_{args.fold}_epoch_8"
-        #     accelerator.save_state(output_dir)
-        #     import sys
-        #     sys.exit(1)
+        start_time = time.time()
+        if args.down_sampling:
+            rus = RandomUnderSampler(sampling_strategy={0: num_neg, 1: num_pos}, random_state=args.seed + (epoch * 100))
+            dev_metadata, _ = rus.fit_resample(dev_df, dev_df["target"])
+            dev_dataset = ISICDataset(
+                dev_metadata,
+                train_images,
+                augment=dev_augment(args.image_size, mean=mean, std=std),
+                use_meta=args.use_meta,
+                cat_cols=cat_cols,
+                cont_cols=cont_cols,
+                infer=False,
+            )
+            sampler = RandomSampler(dev_dataset)
+            dev_dataloader = DataLoader(
+                dev_dataset,
+                batch_size=args.train_batch_size,
+                sampler=sampler,
+                num_workers=args.num_workers,
+                pin_memory=True,
+            )
+            dev_dataloader = accelerator.prepare(dev_dataloader)
+
+        lr = optimizer.param_groups[0]["lr"]
+        logger.info(f"Fold {args.fold} | Epoch {epoch} | LR {lr:.7f}")
+        train_loss = train_epoch(
+            epoch,
+            model,
+            optimizer,
+            criterion,
+            dev_dataloader,
+            lr_scheduler,
+            accelerator,
+            args.use_meta,
+        )
         (
             val_loss,
             val_auc,
