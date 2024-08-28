@@ -1,5 +1,4 @@
 # %% [code]
-import argparse
 import logging
 from accelerate.logging import get_logger
 import time
@@ -7,12 +6,20 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+import h5py
+from io import BytesIO
+from PIL import Image
+
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
+
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from timm import create_model
 from accelerate import Accelerator
-
 
 logger = get_logger(__name__)
 logging.basicConfig(
@@ -143,9 +150,9 @@ class ISICDatasetV1(Dataset):
 
 class ISICNetV1(nn.Module):
     def __init__(
-        self,
-        model_name,
-        pretrained=True,
+            self,
+            model_name,
+            pretrained=True,
     ):
         super(ISICNetV1, self).__init__()
         self.model = create_model(
@@ -171,6 +178,23 @@ class ISICNetV1(nn.Module):
         else:
             logits = self.classifier(pool)
         return logits
+
+
+def get_trans(img, iteration):
+    if iteration >= 6:
+        img = img.transpose(2, 3)
+    if iteration % 6 == 0:
+        return img
+    elif iteration % 6 == 1:
+        return torch.flip(img, dims=[2])
+    elif iteration % 6 == 2:
+        return torch.flip(img, dims=[3])
+    elif iteration % 6 == 3:
+        return torch.rot90(img, 1, dims=[2, 3])
+    elif iteration % 6 == 4:
+        return torch.rot90(img, 2, dims=[2, 3])
+    elif iteration % 6 == 5:
+        return torch.rot90(img, 3, dims=[2, 3])
 
 
 def predict_v1(model, test_dataloader, accelerator, n_tta, log_interval=10):
@@ -201,18 +225,18 @@ def predict_v1(model, test_dataloader, accelerator, n_tta, log_interval=10):
 
 
 def main(model_name, version, model_dir, mixed_precision, image_size, batch_size, n_tta):
+    start_time = time.time()
     (
-        train_metadata, train_images, 
+        train_metadata, train_images,
         test_metadata, test_images
     ) = get_data_v1()
 
-    fold_column = "fold"
     mean = None
     std = None
-    
+
     test_dataset = ISICDatasetV1(
-        test_metadata, 
-        test_images, 
+        test_metadata,
+        test_images,
         augment=test_augment_v1(image_size, mean=mean, std=std),
         infer=False
     )
@@ -226,14 +250,13 @@ def main(model_name, version, model_dir, mixed_precision, image_size, batch_size
     )
     all_folds = np.unique(train_metadata[fold_column])
     for fold in all_folds:
-        start_time = time.time()
         logger.info(f"Fold {fold}")
         accelerator = Accelerator(
             mixed_precision=mixed_precision,
         )
 
         model = ISICNetV1(
-            model_name=args.model_name,
+            model_name=model_name,
             pretrained=True,
         )
         model = model.to(accelerator.device)
