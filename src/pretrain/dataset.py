@@ -177,7 +177,25 @@ class ISICDataset(Dataset):
             return image, x_cat, x_cont, target
 
 
-def preprocess(df):
+def get_emb_szs(cat_cols):
+    emb_szs = {}
+    for col in cat_cols:
+        emb_szs[col] = (len(feature_mapping_dict[col]), min(600, round(1.6 * len(feature_mapping_dict[col]) ** 0.56)))
+    return emb_szs
+
+
+def cnn_norm_feature(df, value_col, group_cols, err=1e-5):
+    stats = ["mean", "std"]
+    tmp = df.groupby(group_cols)[value_col].agg(stats)
+    tmp.columns = [f"{value_col}_{stat}" for stat in stats]
+    tmp.reset_index(inplace=True)
+    df = df.merge(tmp, on=group_cols, how="left")
+    feature_name = f"{value_col}_patient_norm"
+    df[feature_name] = ((df[value_col] - df[f"{value_col}_mean"]) / (df[f"{value_col}_std"] + err)).fillna(0)
+    return df, feature_name
+
+
+def cnn_feature_engineering(df):
     df["age_approx"] = df["age_approx"].fillna(0)
     df["age_approx"] = df["age_approx"] / 90
     df["sex"] = df["sex"].fillna("missing_sex")
@@ -187,53 +205,41 @@ def preprocess(df):
     df["tbp_tile_type"] = df["tbp_tile_type"].map(feature_mapping_dict["tbp_tile_type"])
     df["tbp_lv_location"] = df["tbp_lv_location"].map(feature_mapping_dict["tbp_lv_location"])
     df["tbp_lv_location_simple"] = df["tbp_lv_location_simple"].map(feature_mapping_dict["tbp_lv_location_simple"])
-    return df
 
-
-def get_emb_szs(cat_cols):
-    emb_szs = {}
-    for col in cat_cols:
-        emb_szs[col] = (len(feature_mapping_dict[col]), min(600, round(1.6 * len(feature_mapping_dict[col]) ** 0.56)))
-    return emb_szs
-
-
-def feature_engineering(df, stats_dict=None):
     cat_cols = ["sex", "anatom_site_general",
                 "tbp_tile_type", "tbp_lv_location", "tbp_lv_location_simple"]
-    cont_cols = ["age_approx",
-                 "clin_size_long_diam_mm",
-                 "tbp_lv_A", "tbp_lv_Aext",
-                 "tbp_lv_B", "tbp_lv_Bext",
-                 "tbp_lv_C", "tbp_lv_Cext",
-                 "tbp_lv_H", "tbp_lv_Hext",
-                 "tbp_lv_L", "tbp_lv_Lext",
-                 "tbp_lv_areaMM2", "tbp_lv_area_perim_ratio",
-                 "tbp_lv_color_std_mean",
-                 "tbp_lv_deltaA", "tbp_lv_deltaB", "tbp_lv_deltaL", "tbp_lv_deltaLB", "tbp_lv_deltaLBnorm",
-                 "tbp_lv_eccentricity",
-                 "tbp_lv_minorAxisMM", "tbp_lv_nevi_confidence", "tbp_lv_norm_border",
-                 "tbp_lv_norm_color", "tbp_lv_perimeterMM",
-                 "tbp_lv_radial_color_std_max", "tbp_lv_stdL", "tbp_lv_stdLExt",
-                 "tbp_lv_symm_2axis", "tbp_lv_symm_2axis_angle",
-                 "tbp_lv_x", "tbp_lv_y", "tbp_lv_z"
-                 ]
 
     df["num_images"] = df["patient_id"].map(df.groupby("patient_id")["isic_id"].count())
-    cont_cols.append("num_images")
-
     df["num_images"] = np.log1p(df["num_images"])
 
-    if stats_dict is None:
-        stats_dict = {}
-        for col in cont_cols:
-            if col not in ["num_images", "age_approx"]:
-                stats_dict[col] = {"mean": df[col].mean(), "std": df[col].std()}
-                df[col] = (df[col] - stats_dict[col]["mean"]) / stats_dict[col]["std"]
-    else:
-        for col in cont_cols:
-            if col not in ["num_images", "age_approx"]:
-                df[col] = (df[col] - stats_dict[col]["mean"]) / stats_dict[col]["std"]
-    return df, cat_cols, cont_cols, stats_dict
+    cols_to_norm = [
+        "age_approx",
+        "clin_size_long_diam_mm",
+        "tbp_lv_A", "tbp_lv_Aext",
+        "tbp_lv_B", "tbp_lv_Bext",
+        "tbp_lv_C", "tbp_lv_Cext",
+        "tbp_lv_H", "tbp_lv_Hext",
+        "tbp_lv_L", "tbp_lv_Lext",
+        "tbp_lv_areaMM2", "tbp_lv_area_perim_ratio",
+        "tbp_lv_color_std_mean",
+        "tbp_lv_deltaA", "tbp_lv_deltaB", "tbp_lv_deltaL", "tbp_lv_deltaLB", "tbp_lv_deltaLBnorm",
+        "tbp_lv_eccentricity",
+        "tbp_lv_minorAxisMM", "tbp_lv_nevi_confidence", "tbp_lv_norm_border",
+        "tbp_lv_norm_color", "tbp_lv_perimeterMM",
+        "tbp_lv_radial_color_std_max", "tbp_lv_stdL", "tbp_lv_stdLExt",
+        "tbp_lv_symm_2axis", "tbp_lv_symm_2axis_angle",
+        "tbp_lv_x", "tbp_lv_y", "tbp_lv_z"
+    ]
+    cont_cols = cols_to_norm[:]
+    for col in cols_to_norm:
+        logger.info(f"Normalizing {col}...")
+        df, feature_name = cnn_norm_feature(df, col, ["patient_id"])
+        cont_cols += [feature_name]
+
+    df["num_images"] = np.log1p(df["patient_id"].map(df.groupby("patient_id")["isic_id"].count()))
+    cont_cols += ["num_images"]
+    assert df[cont_cols].isnull().sum().sum() == 0
+    return df, cat_cols, cont_cols
 
 
 def get_data(data_dir):
@@ -245,11 +251,8 @@ def get_data(data_dir):
         folds_df, on=["isic_id", "patient_id"], how="inner"
     )
 
-    logger.info(f"Preprocessing metadata...")
-    train_metadata = preprocess(train_metadata)
-
     logger.info(f"Feature engineering...")
-    train_metadata, cat_cols, cont_cols, stats_dict = feature_engineering(train_metadata)
+    train_metadata, cat_cols, cont_cols = cnn_feature_engineering(train_metadata)
 
     emb_szs = get_emb_szs(cat_cols)
-    return train_metadata, train_images, cat_cols, cont_cols, emb_szs, stats_dict
+    return train_metadata, train_images, cat_cols, cont_cols, emb_szs

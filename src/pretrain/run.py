@@ -154,7 +154,7 @@ def main(args):
     if args.seed is not None:
         set_seed(args.seed, deterministic=True)
 
-    train_metadata, train_images, cat_cols, cont_cols, emb_szs, stats_dict = get_data(args.data_dir)
+    train_metadata, train_images, cat_cols, cont_cols, emb_szs = get_data(args.data_dir)
 
     fold_column = "fold"
     dev_index = train_metadata[train_metadata[fold_column] != args.fold].index
