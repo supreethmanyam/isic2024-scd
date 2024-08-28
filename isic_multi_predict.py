@@ -93,7 +93,7 @@ malignant_labels = ["BCC", "MEL", "SCC"]
 malignant_idx = [label2idx[label] for label in malignant_labels]
 
 
-def get_data():
+def get_data_v1():
     train_metadata = pd.read_csv(INPUT_PATH / "train-metadata.csv", low_memory=False)
     train_images = h5py.File(INPUT_PATH / "train-image.hdf5", mode="r")
     test_metadata = pd.read_csv(INPUT_PATH / "test-metadata.csv", low_memory=False)
