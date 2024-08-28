@@ -250,10 +250,10 @@ def main(model_name, version, model_dir, mixed_precision, image_size, batch_size
     )
     all_folds = np.unique(train_metadata[fold_column])
     for fold in all_folds:
-        logger.info(f"Fold {fold}")
         accelerator = Accelerator(
             mixed_precision=mixed_precision,
         )
+        logger.info(f"Fold {fold}")
 
         model = ISICNetV1(
             model_name=model_name,
