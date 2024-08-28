@@ -230,7 +230,7 @@ def main(model_name, version, model_dir, mixed_precision, image_size, batch_size
         test_metadata,
         test_images,
         augment=test_augment_v1(image_size, mean=mean, std=std),
-        infer=False
+        infer=True
     )
     test_dataloader = DataLoader(
         test_dataset,
