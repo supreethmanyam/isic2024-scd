@@ -1,6 +1,4 @@
 # %% [code]
-import logging
-from accelerate.logging import get_logger
 import time
 from pathlib import Path
 
@@ -21,12 +19,6 @@ from torch.utils.data import Dataset, DataLoader
 from timm import create_model
 from accelerate import Accelerator
 
-logger = get_logger(__name__)
-logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-    datefmt="%m/%d/%Y %H:%M:%S",
-    level=logging.INFO,
-)
 
 id_column = "isic_id"
 target_column = "target"
@@ -253,7 +245,7 @@ def main(model_name, version, model_dir, mixed_precision, image_size, batch_size
         accelerator = Accelerator(
             mixed_precision=mixed_precision,
         )
-        logger.info(f"Fold {fold}")
+        print(f"Fold {fold}")
 
         model = ISICNetV1(
             model_name=model_name,
@@ -295,10 +287,7 @@ def main(model_name, version, model_dir, mixed_precision, image_size, batch_size
     oof_multi_df = pd.DataFrame(multi_test_probs,
                                 columns=[f"oof_{model_name}_{version}_{label}" for label in all_labels])
     oof_df = pd.concat([oof_df, oof_multi_df], axis=1)
-    oof_df.to_csv(
-        f"oof_test_preds_{model_name}_{version}.csv",
-        index=False,
-    )
     runtime = time.time() - start_time
-    logger.info(f"Time taken: {runtime:.2f} s")
-    logger.info(f"Finished predicting")
+    print(f"Time taken: {runtime:.2f} s")
+    print(f"Finished predicting")
+    return oof_df, runtime
