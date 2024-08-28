@@ -249,7 +249,7 @@ def main(model_name, version, model_dir, mixed_precision, image_size, batch_size
 
         model = ISICNetV1(
             model_name=model_name,
-            pretrained=True,
+            pretrained=False,
         )
         model = model.to(accelerator.device)
 
