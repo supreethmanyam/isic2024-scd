@@ -72,6 +72,26 @@ def extract(fzip, dest, desc="Extracting", allowed_extensions: Tuple[str] = None
                     shutil.copyfileobj(CallbackIOWrapper(pbar.update, fi), fo)
 
 
+@app.function(
+    image=image,
+    volumes={str(WEIGHTS_DIR): weights_volume},
+    timeout=60 * 60 * 1,  # 1 hour
+)
+def download_weights_from_kaggle(model_name: str, version: str, mode: str):
+    import subprocess
+
+    setup_kaggle()
+    model_identifier = f"{model_name}_{version}_{mode}"
+    model_dir = Path(WEIGHTS_DIR) / model_identifier
+    subprocess.run(
+        f"kaggle datasets download -d supreethmanyam/isic-scd-{model_identifier.replace('_', '-')} --path {model_dir}",
+        shell=True,
+        check=True,
+    )
+    extract(model_dir / f"isic-scd-{model_identifier.replace('_', '-')}.zip", model_dir)
+    weights_volume.commit()
+
+
 def download_competition_data(path: Path, recreate: bool = False):
     import subprocess
 
@@ -344,19 +364,27 @@ class PreTrainConfig:
 class TrainConfig:
     mode: str = "train"
     mixed_precision: bool = "fp16"
-    image_size: int = 128
+    image_size: int = 64
     train_batch_size: int = 64
     val_batch_size: int = 512
     num_workers: int = 8
     init_lr: float = 3e-5
     num_epochs: int = 20
     n_tta: int = 8
-    down_sampling: bool = True
-    use_meta: bool = True
     seed: int = 2022
 
-    ext: str = ""
+    ext: str = "2020,2019"
     debug: bool = False
+
+
+@dataclass
+class EvaluateConfig:
+    mixed_precision: bool = "fp16"
+    image_size: int = 64
+    val_batch_size: int = 512
+    num_workers: int = 8
+    n_tta: int = 8
+    seed: int = 2022
 
 
 @app.function(
@@ -516,9 +544,69 @@ def train(model_name: str, version: str, fold: int):
             f"--n_tta={config.n_tta}",
             f"--seed={config.seed}",
         ]
-        + (["--use_meta"] if config.use_meta else [])
-        + (["--down_sampling"] if config.down_sampling else [])
         + (["--debug"] if config.debug else [])
+    )
+    print(subprocess.list2cmdline(commands))
+    _exec_subprocess(commands)
+    weights_volume.commit()
+
+
+@app.function(
+    image=image,
+    mounts=[mount_folder("train")],
+    volumes={str(INPUT_DIR): input_volume, str(WEIGHTS_DIR): weights_volume},
+    gpu=GPU_CONFIG,
+    timeout=60 * 60 * 12,  # 24 hours
+    cpu=EvaluateConfig.num_workers,
+)
+def evaluate(model_name: str, version: str, mode: str, fold: int):
+    import subprocess
+    from pprint import pprint
+
+    from accelerate.utils import write_basic_config
+
+    def _exec_subprocess(cmd: list[str]):
+        """Executes subprocess and prints log to terminal while subprocess is running."""
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        with process.stdout as pipe:
+            for line in iter(pipe.readline, b""):
+                line_str = line.decode()
+                print(f"{line_str}", end="")
+
+        if exitcode := process.wait() != 0:
+            raise subprocess.CalledProcessError(exitcode, "\n".join(cmd))
+
+    setup_kaggle()
+    config = EvaluateConfig()
+    print(f"Running with config:")
+    pprint(config.__dict__)
+    model_identifier = f"{model_name}_{version}_{mode}"
+    model_dir = Path(WEIGHTS_DIR) / model_identifier
+    data_dir = INPUT_DIR / "isic-2024-challenge"
+
+    write_basic_config(mixed_precision=config.mixed_precision)
+    print("Launching evaluate script")
+    commands = (
+        [
+            "accelerate",
+            "launch",
+            f"{mode}/evaluate.py",
+            f"--model_name={model_name}",
+            f"--version={version}",
+            f"--model_dir={model_dir}",
+            f"--data_dir={data_dir}",
+            f"--fold={fold}",
+            f"--mixed_precision={config.mixed_precision}",
+            f"--image_size={config.image_size}",
+            f"--val_batch_size={config.val_batch_size}",
+            f"--num_workers={config.num_workers}",
+            f"--n_tta={config.n_tta}",
+            f"--seed={config.seed}",
+        ]
     )
     print(subprocess.list2cmdline(commands))
     _exec_subprocess(commands)

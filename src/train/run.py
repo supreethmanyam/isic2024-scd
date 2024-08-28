@@ -24,8 +24,8 @@ from dataset import (
 from engine import train_epoch, val_epoch
 from models import ISICNetV1
 from torch.utils.data import DataLoader, RandomSampler
-from imblearn.under_sampling import RandomUnderSampler
 from utils import logger
+from dataset import all_labels
 
 
 def parse_args(input_args=None):
@@ -118,12 +118,6 @@ def parse_args(input_args=None):
         "--n_tta", type=int, default=6, help="Number of test time augmentations."
     )
     parser.add_argument(
-        "--use_meta", action="store_true", default=False, help="Use metadata."
-    )
-    parser.add_argument(
-        "--down_sampling", action="store_true", default=False, help="Down sampling."
-    )
-    parser.add_argument(
         "--seed", type=int, default=None, help="A seed for reproducible training."
     )
     parser.add_argument(
@@ -169,8 +163,7 @@ def main(args):
     (
         train_metadata, train_images,
         train_metadata_2020, train_images_2020,
-        train_metadata_2019, train_images_2019,
-        cat_cols, cont_cols, emb_szs
+        train_metadata_2019, train_images_2019
     ) = get_data_v1(
         args.data_dir,
         args.data_2020_dir,
@@ -178,67 +171,76 @@ def main(args):
     )
 
     fold_column = "fold"
-    dev_index = train_metadata[train_metadata[fold_column] != args.fold].index
-    val_index = train_metadata[train_metadata[fold_column] == args.fold].index
-
-    dev_df = train_metadata.loc[dev_index, :].reset_index(drop=True)
-    pos_samples = dev_df[dev_df["target"] == 1]
-    neg_samples = dev_df[dev_df["target"] == 0]
-    num_pos = len(pos_samples)
-    num_neg = num_pos * 100 if args.down_sampling else len(neg_samples)
-
-    if not train_metadata_2020.empty:
-        pos_samples_2020 = train_metadata_2020[train_metadata_2020["target"] == 1]
-        neg_samples_2020 = train_metadata_2020[train_metadata_2020["target"] == 0]
-        num_pos_2020 = len(pos_samples_2020)
-        num_neg_2020 = min(len(neg_samples_2020),
-                           num_pos_2020 * 100) if args.down_sampling else len(neg_samples_2020)
-        logger.info(f"2020: {num_pos_2020} positive samples, {num_neg_2020} negative samples")
+    if args.debug:
+        args.num_epochs = 2
+        dev_index = (
+            train_metadata[train_metadata[fold_column] != args.fold]
+            .sample(args.train_batch_size * 3, random_state=args.seed)
+            .index
+        )
+        val_index = (
+            train_metadata[train_metadata[fold_column] == args.fold]
+            .sample(args.val_batch_size * 10, random_state=args.seed)
+            .index
+        )
     else:
-        num_pos_2020 = 0
-        num_neg_2020 = 0
-
-    if not train_metadata_2019.empty:
-        pos_samples_2019 = train_metadata_2019[train_metadata_2019["target"] == 1]
-        neg_samples_2019 = train_metadata_2019[train_metadata_2019["target"] == 0]
-        num_pos_2019 = len(pos_samples_2019)
-        num_neg_2019 = min(len(neg_samples_2019),
-                           num_pos_2019 * 100) if args.down_sampling else len(neg_samples_2019)
-        logger.info(f"2019: {num_pos_2019} positive samples, {num_neg_2019} negative samples")
-    else:
-        num_pos_2019 = 0
-        num_neg_2019 = 0
+        dev_index = train_metadata[train_metadata[fold_column] != args.fold].index
+        val_index = train_metadata[train_metadata[fold_column] == args.fold].index
 
     mean = None
     std = None
 
-    dev_metadata = dev_df.copy()
+    dev_metadata = train_metadata.loc[dev_index, :].reset_index(drop=True)
+    val_metadata = train_metadata.loc[val_index, :].reset_index(drop=True)
+
     dev_dataset = ISICDatasetV1(
         dev_metadata,
         train_images,
         augment=dev_augment_v1(args.image_size, mean=mean, std=std),
-        use_meta=args.use_meta,
-        cat_cols=cat_cols,
-        cont_cols=cont_cols,
         infer=False,
     )
-    dev_dataloader = DataLoader(
-        dev_dataset,
-        batch_size=args.train_batch_size,
-        shuffle=True,
-        num_workers=args.num_workers,
-        pin_memory=True,
-    )
-
-    val_metadata = train_metadata.loc[val_index, :].reset_index(drop=True)
     val_dataset = ISICDatasetV1(
         val_metadata,
         train_images,
         augment=val_augment_v1(args.image_size, mean=mean, std=std),
-        use_meta=args.use_meta,
-        cat_cols=cat_cols,
-        cont_cols=cont_cols,
         infer=False,
+    )
+
+    if not train_metadata_2020.empty:
+        logger.info("Using 2020 data")
+        if args.debug:
+            train_metadata_2020 = train_metadata_2020.sample(
+                args.train_batch_size * 1
+            ).reset_index(drop=True)
+        train_dataset_2020 = ISICDatasetV1(
+            train_metadata_2020,
+            train_images_2020,
+            augment=dev_augment_v1(args.image_size),
+            infer=False,
+        )
+        dev_dataset = torch.utils.data.ConcatDataset([dev_dataset, train_dataset_2020])
+    if not train_metadata_2019.empty:
+        logger.info("Using 2019 data")
+        if args.debug:
+            train_metadata_2019 = train_metadata_2019.sample(
+                args.train_batch_size * 1
+            ).reset_index(drop=True)
+        train_dataset_2019 = ISICDatasetV1(
+            train_metadata_2019,
+            train_images_2019,
+            augment=dev_augment_v1(args.image_size),
+            infer=False,
+        )
+        dev_dataset = torch.utils.data.ConcatDataset([dev_dataset, train_dataset_2019])
+
+    sampler = RandomSampler(dev_dataset)
+
+    dev_dataloader = DataLoader(
+        dev_dataset,
+        batch_size=args.train_batch_size,
+        sampler=sampler,
+        num_workers=args.num_workers,
+        pin_memory=True,
     )
     val_dataloader = DataLoader(
         val_dataset,
@@ -252,13 +254,9 @@ def main(args):
     model = ISICNetV1(
         model_name=args.model_name,
         pretrained=True,
-        use_meta=args.use_meta,
-        cat_cols=cat_cols,
-        cont_cols=cont_cols,
-        emb_szs=emb_szs,
     )
     model = model.to(accelerator.device)
-    criterion = nn.BCELoss()
+    criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.init_lr)
     lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
@@ -266,9 +264,7 @@ def main(args):
         max_lr=args.init_lr * 10,
         div_factor=10,
         epochs=args.num_epochs,
-        steps_per_epoch=(num_pos + num_neg +
-                         num_pos_2020 + num_neg_2020 +
-                         num_pos_2019 + num_neg_2019) // args.train_batch_size,
+        steps_per_epoch=len(dev_dataloader),
     )
 
     (
@@ -285,6 +281,7 @@ def main(args):
     best_val_auc = 0
     best_val_pauc = 0
     best_epoch = 0
+    best_multi_val_probs = None
     best_val_probs = None
     train_losses = []
     val_losses = []
@@ -292,56 +289,6 @@ def main(args):
     val_aucs = []
     for epoch in range(1, args.num_epochs + 1):
         start_time = time.time()
-        if args.down_sampling:
-            rus = RandomUnderSampler(sampling_strategy={0: num_neg, 1: num_pos}, random_state=args.seed + (epoch * 100))
-            dev_metadata, _ = rus.fit_resample(dev_df, dev_df["target"])
-            dev_dataset = ISICDatasetV1(
-                dev_metadata,
-                train_images,
-                augment=dev_augment_v1(args.image_size, mean=mean, std=std),
-                use_meta=args.use_meta,
-                cat_cols=cat_cols,
-                cont_cols=cont_cols,
-                infer=False,
-            )
-            if not train_metadata_2020.empty:
-                rus = RandomUnderSampler(sampling_strategy={0: num_neg_2020, 1: num_pos_2020},
-                                         random_state=args.seed + (epoch * 100))
-                train_metadata_2020, _ = rus.fit_resample(train_metadata_2020, train_metadata_2020["target"])
-                train_dataset_2020 = ISICDatasetV1(
-                    train_metadata_2020,
-                    train_images_2020,
-                    augment=dev_augment_v1(args.image_size, mean=mean, std=std),
-                    use_meta=args.use_meta,
-                    cat_cols=cat_cols,
-                    cont_cols=cont_cols,
-                    infer=False,
-                )
-                dev_dataset = torch.utils.data.ConcatDataset([dev_dataset, train_dataset_2020])
-            if not train_metadata_2019.empty:
-                rus = RandomUnderSampler(sampling_strategy={0: num_neg_2019, 1: num_pos_2019},
-                                         random_state=args.seed + (epoch * 100))
-                train_metadata_2019, _ = rus.fit_resample(train_metadata_2019, train_metadata_2019["target"])
-                train_dataset_2019 = ISICDatasetV1(
-                    train_metadata_2019,
-                    train_images_2019,
-                    augment=dev_augment_v1(args.image_size, mean=mean, std=std),
-                    use_meta=args.use_meta,
-                    cat_cols=cat_cols,
-                    cont_cols=cont_cols,
-                    infer=False,
-                )
-                dev_dataset = torch.utils.data.ConcatDataset([dev_dataset, train_dataset_2019])
-            sampler = RandomSampler(dev_dataset)
-            dev_dataloader = DataLoader(
-                dev_dataset,
-                batch_size=args.train_batch_size,
-                sampler=sampler,
-                num_workers=args.num_workers,
-                pin_memory=True,
-            )
-            dev_dataloader = accelerator.prepare(dev_dataloader)
-
         lr = optimizer.param_groups[0]["lr"]
         logger.info(f"Fold {args.fold} | Epoch {epoch} | LR {lr:.7f}")
         train_loss = train_epoch(
@@ -352,12 +299,12 @@ def main(args):
             dev_dataloader,
             lr_scheduler,
             accelerator,
-            args.use_meta,
         )
         (
             val_loss,
             val_auc,
             val_pauc,
+            multi_val_probs,
             val_probs,
             val_targets,
         ) = val_epoch(
@@ -367,7 +314,6 @@ def main(args):
             val_dataloader,
             accelerator,
             args.n_tta,
-            args.use_meta,
         )
         train_losses.append(train_loss)
         val_losses.append(val_loss)
@@ -386,6 +332,7 @@ def main(args):
             best_val_auc = val_auc
             best_val_loss = val_loss
             best_epoch = epoch
+            best_multi_val_probs = multi_val_probs
             best_val_probs = val_probs
             output_dir = f"{args.model_dir}/models/fold_{args.fold}"
             accelerator.save_state(output_dir)
@@ -417,6 +364,10 @@ def main(args):
             f"oof_{args.model_name}_{args.version}": best_val_probs.flatten(),
         }
     )
+    oof_multi_df = pd.DataFrame(best_multi_val_probs,
+                                columns=[f"oof_{args.model_name}_{args.version}_{label}" for label in all_labels])
+    oof_df = pd.concat([oof_df, oof_multi_df], axis=1)
+
     oof_df.to_csv(
         f"{args.model_dir}/oof_preds_{args.model_name}_{args.version}_fold_{args.fold}.csv",
         index=False,
