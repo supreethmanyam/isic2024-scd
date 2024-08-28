@@ -200,64 +200,7 @@ def predict_v1(model, test_dataloader, accelerator, n_tta, log_interval=10):
     return multi_test_probs, test_probs
 
 
-def parse_args(input_args=None):
-    parser = argparse.ArgumentParser(description="Predict ISIC2024 SCD")
-    parser.add_argument(
-        "--model_name",
-        type=str,
-        default=None,
-        required=True,
-        help="Model name for timm",
-    )
-    parser.add_argument(
-        "--version",
-        type=str,
-        default=None,
-        required=True,
-        help="Version of the model",
-    )
-    parser.add_argument(
-        "--model_dir",
-        type=str,
-        default=None,
-        required=True,
-        help="The directory where the model predictions and checkpoints will be written.",
-    )
-    parser.add_argument(
-        "--mixed_precision",
-        type=str,
-        default=None,
-        choices=["no", "fp16", "bf16"],
-        help=(
-            "Whether to use mixed precision. Choose between fp16 and bf16 (bfloat16). Bf16 requires PyTorch >="
-            " 1.10.and an Nvidia Ampere GPU.  Default to the value of accelerate config of the current system or the"
-            " flag passed with the `accelerate.launch` command. Use this argument to override the accelerate config."
-        ),
-    )
-    parser.add_argument("--image_size", type=int, default=64, help="Image size.")
-    parser.add_argument(
-        "--val_batch_size",
-        type=int,
-        default=64,
-        help="Batch size for validation.",
-    )
-    parser.add_argument(
-        "--num_workers", type=int, default=4, help="Number of workers for dataloader."
-    )
-    parser.add_argument(
-        "--n_tta", type=int, default=6, help="Number of test time augmentations."
-    )
-
-    if input_args is not None:
-        args = parser.parse_args(input_args)
-    else:
-        args = parser.parse_args()
-
-    return args
-
-
-def main(args):
-    args = parse_args()
+def main(model_name, version, model_dir, mixed_precision, image_size, batch_size, n_tta):
     (
         train_metadata, train_images, 
         test_metadata, test_images
@@ -270,12 +213,12 @@ def main(args):
     test_dataset = ISICDatasetV1(
         test_metadata, 
         test_images, 
-        augment=test_augment_v1(args.image_size, mean=mean, std=std),
+        augment=test_augment_v1(image_size, mean=mean, std=std),
         infer=False
     )
     test_dataloader = DataLoader(
         test_dataset,
-        batch_size=args.val_batch_size,
+        batch_size=batch_size,
         shuffle=False,
         num_workers=4,
         drop_last=False,
@@ -284,9 +227,9 @@ def main(args):
     all_folds = np.unique(train_metadata[fold_column])
     for fold in all_folds:
         start_time = time.time()
-        logger.info(f"Fold {args.fold}")
+        logger.info(f"Fold {fold}")
         accelerator = Accelerator(
-            mixed_precision=args.mixed_precision,
+            mixed_precision=mixed_precision,
         )
 
         model = ISICNetV1(
@@ -301,7 +244,7 @@ def main(args):
         ) = accelerator.prepare(
             model, test_dataloader,
         )
-        model_filepath = f"{args.model_dir}/models/fold_{args.fold}"
+        model_filepath = f"{model_dir}/models/fold_{fold}"
         accelerator.load_state(model_filepath)
         (
             multi_test_probs_fold,
@@ -310,7 +253,7 @@ def main(args):
             model,
             test_dataloader,
             accelerator,
-            args.n_tta,
+            n_tta,
         )
         if fold == 1:
             multi_test_probs = multi_test_probs_fold
@@ -323,14 +266,14 @@ def main(args):
     oof_df = pd.DataFrame(
         {
             "isic_id": test_metadata["isic_id"],
-            f"oof_{args.model_name}_{args.version}": test_probs.flatten(),
+            f"oof_{model_name}_{version}": test_probs.flatten(),
         }
     )
     oof_multi_df = pd.DataFrame(multi_test_probs,
-                                columns=[f"oof_{args.model_name}_{args.version}_{label}" for label in all_labels])
+                                columns=[f"oof_{model_name}_{version}_{label}" for label in all_labels])
     oof_df = pd.concat([oof_df, oof_multi_df], axis=1)
     oof_df.to_csv(
-        f"oof_test_preds_{args.model_name}_{args.version}.csv",
+        f"oof_test_preds_{model_name}_{version}.csv",
         index=False,
     )
     runtime = time.time() - start_time
