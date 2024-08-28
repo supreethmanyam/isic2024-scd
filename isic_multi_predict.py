@@ -224,13 +224,6 @@ def parse_args(input_args=None):
         help="The directory where the model predictions and checkpoints will be written.",
     )
     parser.add_argument(
-        "--data_dir",
-        type=str,
-        default=None,
-        required=True,
-        help="The directory where the data is stored.",
-    )
-    parser.add_argument(
         "--mixed_precision",
         type=str,
         default=None,
@@ -254,9 +247,6 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--n_tta", type=int, default=6, help="Number of test time augmentations."
     )
-    parser.add_argument(
-        "--seed", type=int, default=None, help="A seed for reproducible training."
-    )
 
     if input_args is not None:
         args = parser.parse_args(input_args)
@@ -267,6 +257,7 @@ def parse_args(input_args=None):
 
 
 def main(args):
+    args = parse_args()
     (
         train_metadata, train_images, 
         test_metadata, test_images
