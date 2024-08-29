@@ -348,7 +348,7 @@ class TrainBinaryConfig:
     mode: str = "trainbinary"
     fold_column: str = "gkf_fold"
     mixed_precision: bool = "fp16"
-    image_size: int = 64
+    image_size: int = 92
     train_batch_size: int = 64
     val_batch_size: int = 512
     num_workers: int = 8
@@ -447,7 +447,7 @@ def trainbinary(model_name: str, version: str, fold: int):
 
 @dataclass
 class TrainMultiConfig:
-    mode: str = "train"
+    mode: str = "trainmulti"
     fold_column: str = "gkf_fold"
     mixed_precision: bool = "fp16"
     image_size: int = 64
@@ -520,7 +520,7 @@ def trainmulti(model_name: str, version: str, fold: int):
         [
             "accelerate",
             "launch",
-            "train/run.py",
+            f"{config.mode}/run.py",
             f"--model_name={model_name}",
             f"--version={version}",
             f"--model_dir={model_dir}",
@@ -529,6 +529,7 @@ def trainmulti(model_name: str, version: str, fold: int):
         + (["--data_2020_dir", data_2020_dir] if data_2020_dir else [])
         + (["--data_2019_dir", data_2019_dir] if data_2019_dir else [])
         + [
+            f"--fold_column={config.fold_column}",
             f"--fold={fold}",
         ]
         + [
@@ -568,8 +569,8 @@ def upload_weights(model_name: str, version: str, mode: str | None = None):
 
     setup_kaggle()
 
-    if mode not in ["trainbinary", "train"]:
-        raise ValueError("Value of mode must be one of ['trainbinary', 'train']")
+    if mode not in ["trainbinary", "trainmulti"]:
+        raise ValueError("Value of mode must be one of ['trainbinary', 'trainmulti']")
     model_identifier = f"{model_name}_{version}_{mode}"
     model_dir = Path(WEIGHTS_DIR) / model_identifier
 
