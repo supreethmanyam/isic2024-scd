@@ -1,4 +1,5 @@
 from io import BytesIO
+
 import albumentations as A
 import h5py
 import numpy as np
@@ -7,7 +8,6 @@ import torch
 from albumentations.pytorch import ToTensorV2
 from PIL import Image
 from torch.utils.data import Dataset
-
 
 multi_target_mapping_dict = {
     "2024": {
@@ -73,7 +73,7 @@ malignant_labels = ["BCC", "MEL", "SCC"]
 malignant_idx = [label2idx[label] for label in malignant_labels]
 
 
-def dev_augment_v1(image_size, mean=None, std=None):
+def dev_augment(image_size, mean=None, std=None):
     if mean is not None and std is not None:
         normalize = A.Normalize(mean=mean, std=std, max_pixel_value=255.0, p=1.0)
     else:
@@ -126,7 +126,7 @@ def dev_augment_v1(image_size, mean=None, std=None):
     return transform
 
 
-def val_augment_v1(image_size, mean=None, std=None):
+def val_augment(image_size, mean=None, std=None):
     if mean is not None and std is not None:
         normalize = A.Normalize(mean=mean, std=std, max_pixel_value=255.0, p=1.0)
     else:
@@ -137,7 +137,7 @@ def val_augment_v1(image_size, mean=None, std=None):
     return transform
 
 
-def test_augment_v1(image_size, mean=None, std=None):
+def test_augment_multi(image_size, mean=None, std=None):
     if mean is not None and std is not None:
         normalize = A.Normalize(mean=mean, std=std, max_pixel_value=255.0, p=1.0)
     else:
@@ -148,7 +148,7 @@ def test_augment_v1(image_size, mean=None, std=None):
     return transform
 
 
-class ISICDatasetV1(Dataset):
+class ISICDatasetMulti(Dataset):
     def __init__(self, metadata, images, augment, infer=False):
         self.metadata = metadata
         self.images = images
@@ -172,7 +172,7 @@ class ISICDatasetV1(Dataset):
             return image, target
 
 
-def get_data_v1(data_dir, data_2020_dir, data_2019_dir):
+def get_data_multi(data_dir, data_2020_dir, data_2019_dir):
     train_metadata = pd.read_csv(f"{data_dir}/train-metadata.csv", low_memory=False)
     train_images = h5py.File(f"{data_dir}/train-image.hdf5", mode="r")
 
@@ -188,7 +188,9 @@ def get_data_v1(data_dir, data_2020_dir, data_2019_dir):
     train_metadata["label"] = train_metadata["label"].map(label2idx)
 
     if data_2020_dir is not None:
-        train_metadata_2020 = pd.read_csv(f"{data_2020_dir}/train-metadata.csv", low_memory=False)
+        train_metadata_2020 = pd.read_csv(
+            f"{data_2020_dir}/train-metadata.csv", low_memory=False
+        )
         train_images_2020 = h5py.File(f"{data_2020_dir}/train-image.hdf5", mode="r")
 
         train_metadata_2020["label"] = train_metadata_2020["diagnosis"].fillna(
@@ -203,7 +205,9 @@ def get_data_v1(data_dir, data_2020_dir, data_2019_dir):
         train_images_2020 = None
 
     if data_2019_dir is not None:
-        train_metadata_2019 = pd.read_csv(f"{data_2019_dir}/train-metadata.csv", low_memory=False)
+        train_metadata_2019 = pd.read_csv(
+            f"{data_2019_dir}/train-metadata.csv", low_memory=False
+        )
         train_images_2019 = h5py.File(f"{data_2019_dir}/train-image.hdf5", mode="r")
 
         train_metadata_2019["label"] = train_metadata_2019["diagnosis"].replace(
@@ -214,6 +218,11 @@ def get_data_v1(data_dir, data_2020_dir, data_2019_dir):
         train_metadata_2019 = pd.DataFrame()
         train_images_2019 = None
 
-    return (train_metadata, train_images,
-            train_metadata_2020, train_images_2020,
-            train_metadata_2019, train_images_2019)
+    return (
+        train_metadata,
+        train_images,
+        train_metadata_2020,
+        train_images_2020,
+        train_metadata_2019,
+        train_images_2019,
+    )

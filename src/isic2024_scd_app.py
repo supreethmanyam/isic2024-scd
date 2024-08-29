@@ -38,8 +38,8 @@ INPUT_DIR = Path("/kaggle/input")
 
 
 def setup_kaggle():
-    import subprocess
     import os
+    import subprocess
 
     kaggle_api_token_data = os.environ["KAGGLE_API_TOKEN"]
     kaggle_token_filepath = Path.home() / ".config" / "kaggle" / "kaggle.json"
@@ -189,6 +189,7 @@ def center_crop_and_resize(img, resize_to):
 
 def process_file(file):
     import os
+
     import numpy as np
     from PIL import Image as PILImage
 
@@ -343,8 +344,9 @@ def mount_folder(folder_name: str):
 
 
 @dataclass
-class PreTrainConfig:
-    mode: str = "pretrain"
+class TrainBinaryConfig:
+    mode: str = "trainbinary"
+    fold_column: str = "gkf_fold"
     mixed_precision: bool = "fp16"
     image_size: int = 128
     train_batch_size: int = 64
@@ -354,15 +356,99 @@ class PreTrainConfig:
     num_epochs: int = 20
     n_tta: int = 8
     down_sampling: bool = True
+    sampling_rate: float = 0.01
     use_meta: bool = True
     seed: int = 2022
 
     debug: bool = False
 
 
+@app.function(
+    image=image,
+    mounts=[mount_folder("trainbinary")],
+    volumes={str(INPUT_DIR): input_volume, str(WEIGHTS_DIR): weights_volume},
+    gpu=GPU_CONFIG,
+    timeout=60 * 60 * 24,  # 24 hours
+    cpu=TrainBinaryConfig.num_workers,
+)
+def trainbinary(model_name: str, version: str, fold: int):
+    import json
+    import subprocess
+    from pprint import pprint
+
+    from accelerate.utils import write_basic_config
+
+    def _exec_subprocess(cmd: list[str]):
+        """Executes subprocess and prints log to terminal while subprocess is running."""
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        with process.stdout as pipe:
+            for line in iter(pipe.readline, b""):
+                line_str = line.decode()
+                print(f"{line_str}", end="")
+
+        if exitcode := process.wait() != 0:
+            raise subprocess.CalledProcessError(exitcode, "\n".join(cmd))
+
+    setup_kaggle()
+    config = TrainBinaryConfig()
+    print(f"Running with config:")
+    pprint(config.__dict__)
+    metadata = {"params": config.__dict__}
+    model_identifier = f"{model_name}_{version}_{config.mode}"
+    model_dir = Path(WEIGHTS_DIR) / model_identifier
+    model_dir.mkdir(parents=True, exist_ok=True)
+    with open(model_dir / f"{model_name}_{version}_run_metadata.json", "w") as f:
+        json.dump(metadata, f)
+
+    data_dir = INPUT_DIR / "isic-2024-challenge"
+
+    write_basic_config(mixed_precision=config.mixed_precision)
+    print("Launching training script")
+    commands = (
+        [
+            "accelerate",
+            "launch",
+            f"{config.mode}/run.py",
+            f"--model_name={model_name}",
+            f"--version={version}",
+            f"--model_dir={model_dir}",
+            f"--data_dir={data_dir}",
+            f"--fold_column={config.fold_column}",
+            f"--fold={fold}",
+            f"--mixed_precision={config.mixed_precision}",
+            f"--image_size={config.image_size}",
+            f"--train_batch_size={config.train_batch_size}",
+            f"--val_batch_size={config.val_batch_size}",
+            f"--num_workers={config.num_workers}",
+            f"--init_lr={config.init_lr}",
+            f"--num_epochs={config.num_epochs}",
+            f"--n_tta={config.n_tta}",
+            f"--seed={config.seed}",
+        ]
+        + (["--use_meta"] if config.use_meta else [])
+        + (
+            [
+                "--down_sampling",
+                f"--sampling_rate={config.sampling_rate}",
+            ]
+            if config.down_sampling
+            else []
+        )
+        + (["--debug"] if config.debug else [])
+    )
+    print(subprocess.list2cmdline(commands))
+    _exec_subprocess(commands)
+    weights_volume.commit()
+
+
 @dataclass
-class TrainConfig:
+class TrainMultiConfig:
     mode: str = "train"
+    fold_column: str = "gkf_fold"
     mixed_precision: bool = "fp16"
     image_size: int = 64
     train_batch_size: int = 64
@@ -377,25 +463,15 @@ class TrainConfig:
     debug: bool = False
 
 
-@dataclass
-class EvaluateConfig:
-    mixed_precision: bool = "fp16"
-    image_size: int = 64
-    val_batch_size: int = 512
-    num_workers: int = 8
-    n_tta: int = 8
-    seed: int = 2022
-
-
 @app.function(
     image=image,
-    mounts=[mount_folder("pretrain")],
+    mounts=[mount_folder("trainmulti")],
     volumes={str(INPUT_DIR): input_volume, str(WEIGHTS_DIR): weights_volume},
     gpu=GPU_CONFIG,
     timeout=60 * 60 * 24,  # 24 hours
-    cpu=PreTrainConfig.num_workers,
+    cpu=TrainMultiConfig.num_workers,
 )
-def pretrain(model_name: str, version: str, fold: int):
+def trainmulti(model_name: str, version: str, fold: int):
     import json
     import subprocess
     from pprint import pprint
@@ -418,89 +494,11 @@ def pretrain(model_name: str, version: str, fold: int):
             raise subprocess.CalledProcessError(exitcode, "\n".join(cmd))
 
     setup_kaggle()
-    config = PreTrainConfig()
+    config = TrainMultiConfig()
     print(f"Running with config:")
     pprint(config.__dict__)
     metadata = {"params": config.__dict__}
-    model_identifier = f"{model_name}_{version}_pretrain"
-    model_dir = Path(WEIGHTS_DIR) / model_identifier
-    model_dir.mkdir(parents=True, exist_ok=True)
-    with open(model_dir / f"{model_name}_{version}_run_metadata.json", "w") as f:
-        json.dump(metadata, f)
-
-    data_dir = INPUT_DIR / "isic-2024-challenge"
-
-    write_basic_config(mixed_precision=config.mixed_precision)
-    print("Launching training script")
-    commands = (
-        [
-            "accelerate",
-            "launch",
-            "pretrain/run.py",
-            f"--model_name={model_name}",
-            f"--version={version}",
-            f"--model_dir={model_dir}",
-            f"--data_dir={data_dir}",
-        ]
-        + [
-            f"--fold={fold}",
-        ]
-        + [
-            f"--mixed_precision={config.mixed_precision}",
-            f"--image_size={config.image_size}",
-            f"--train_batch_size={config.train_batch_size}",
-            f"--val_batch_size={config.val_batch_size}",
-            f"--num_workers={config.num_workers}",
-            f"--init_lr={config.init_lr}",
-            f"--num_epochs={config.num_epochs}",
-            f"--n_tta={config.n_tta}",
-            f"--seed={config.seed}",
-        ]
-        + (["--use_meta"] if config.use_meta else [])
-        + (["--down_sampling"] if config.down_sampling else [])
-        + (["--debug"] if config.debug else [])
-    )
-    print(subprocess.list2cmdline(commands))
-    _exec_subprocess(commands)
-    weights_volume.commit()
-
-
-@app.function(
-    image=image,
-    mounts=[mount_folder("train")],
-    volumes={str(INPUT_DIR): input_volume, str(WEIGHTS_DIR): weights_volume},
-    gpu=GPU_CONFIG,
-    timeout=60 * 60 * 24,  # 24 hours
-    cpu=TrainConfig.num_workers,
-)
-def train(model_name: str, version: str, fold: int):
-    import json
-    import subprocess
-    from pprint import pprint
-
-    from accelerate.utils import write_basic_config
-
-    def _exec_subprocess(cmd: list[str]):
-        """Executes subprocess and prints log to terminal while subprocess is running."""
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-        with process.stdout as pipe:
-            for line in iter(pipe.readline, b""):
-                line_str = line.decode()
-                print(f"{line_str}", end="")
-
-        if exitcode := process.wait() != 0:
-            raise subprocess.CalledProcessError(exitcode, "\n".join(cmd))
-
-    setup_kaggle()
-    config = TrainConfig()
-    print(f"Running with config:")
-    pprint(config.__dict__)
-    metadata = {"params": config.__dict__}
-    model_identifier = f"{model_name}_{version}_train"
+    model_identifier = f"{model_name}_{version}_{config.mode}"
     model_dir = Path(WEIGHTS_DIR) / model_identifier
     model_dir.mkdir(parents=True, exist_ok=True)
     with open(model_dir / f"{model_name}_{version}_run_metadata.json", "w") as f:
@@ -553,69 +551,7 @@ def train(model_name: str, version: str, fold: int):
 
 @app.function(
     image=image,
-    mounts=[mount_folder("train")],
-    volumes={str(INPUT_DIR): input_volume, str(WEIGHTS_DIR): weights_volume},
-    gpu=GPU_CONFIG,
-    timeout=60 * 60 * 12,  # 24 hours
-    cpu=EvaluateConfig.num_workers,
-)
-def evaluate(model_name: str, version: str, mode: str, fold: int):
-    import subprocess
-    from pprint import pprint
-
-    from accelerate.utils import write_basic_config
-
-    def _exec_subprocess(cmd: list[str]):
-        """Executes subprocess and prints log to terminal while subprocess is running."""
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-        with process.stdout as pipe:
-            for line in iter(pipe.readline, b""):
-                line_str = line.decode()
-                print(f"{line_str}", end="")
-
-        if exitcode := process.wait() != 0:
-            raise subprocess.CalledProcessError(exitcode, "\n".join(cmd))
-
-    setup_kaggle()
-    config = EvaluateConfig()
-    print(f"Running with config:")
-    pprint(config.__dict__)
-    model_identifier = f"{model_name}_{version}_{mode}"
-    model_dir = Path(WEIGHTS_DIR) / model_identifier
-    data_dir = INPUT_DIR / "isic-2024-challenge"
-
-    write_basic_config(mixed_precision=config.mixed_precision)
-    print("Launching evaluate script")
-    commands = (
-        [
-            "accelerate",
-            "launch",
-            f"{mode}/evaluate.py",
-            f"--model_name={model_name}",
-            f"--version={version}",
-            f"--model_dir={model_dir}",
-            f"--data_dir={data_dir}",
-            f"--fold={fold}",
-            f"--mixed_precision={config.mixed_precision}",
-            f"--image_size={config.image_size}",
-            f"--val_batch_size={config.val_batch_size}",
-            f"--num_workers={config.num_workers}",
-            f"--n_tta={config.n_tta}",
-            f"--seed={config.seed}",
-        ]
-    )
-    print(subprocess.list2cmdline(commands))
-    _exec_subprocess(commands)
-    weights_volume.commit()
-
-
-@app.function(
-    image=image,
-    mounts=[mount_folder("pretrain"), mount_folder("train")],
+    mounts=[mount_folder("trainbinary"), mount_folder("trainmulti")],
     volumes={str(WEIGHTS_DIR): weights_volume},
     timeout=60 * 60,  # 1 hour
 )
@@ -628,23 +564,25 @@ def upload_weights(model_name: str, version: str, mode: str | None = None):
 
     import numpy as np
     import pandas as pd
-    from pretrain.utils import compute_auc, compute_pauc
+    from trainbinary.utils import compute_auc, compute_pauc
 
     setup_kaggle()
 
-    if mode not in ["pretrain", "train"]:
-        raise ValueError("Value of mode must be one of ['pretrain', 'train']")
+    if mode not in ["trainbinary", "train"]:
+        raise ValueError("Value of mode must be one of ['trainbinary', 'train']")
     model_identifier = f"{model_name}_{version}_{mode}"
     model_dir = Path(WEIGHTS_DIR) / model_identifier
 
     oof_preds_fold_filepaths = glob(
-        str(model_dir / f"oof_preds_{model_name}_{version}_fold_*.csv")
+        str(model_dir / f"oof_train_preds_{model_name}_{version}_fold_*.csv")
     )
     oof_preds_df = pd.concat(
         [pd.read_csv(filepath) for filepath in oof_preds_fold_filepaths],
         ignore_index=True,
     )
-    oof_preds_df.to_csv(model_dir / f"oof_preds_{model_name}_{version}.csv", index=False)
+    oof_preds_df.to_csv(
+        model_dir / f"oof_train_preds_{model_name}_{version}.csv", index=False
+    )
 
     all_folds = np.unique(oof_preds_df["fold"])
     val_auc_scores = {}

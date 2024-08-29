@@ -1,37 +1,26 @@
 # %% [code]
-import logging
-from accelerate.logging import get_logger
 import time
+import json
+from pprint import pprint
+from io import BytesIO
 from pathlib import Path
 
+import albumentations as A
+import h5py
 import numpy as np
 import pandas as pd
-
-import h5py
-from io import BytesIO
-from PIL import Image
-
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
-from timm import create_model
 from accelerate import Accelerator
-
-logger = get_logger(__name__)
-logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-    datefmt="%m/%d/%Y %H:%M:%S",
-    level=logging.INFO,
-)
+from albumentations.pytorch import ToTensorV2
+from PIL import Image
+from timm import create_model
+from torch.utils.data import DataLoader, Dataset
 
 id_column = "isic_id"
 target_column = "target"
 group_column = "patient_id"
-fold_column = "fold"
 
 INPUT_PATH = Path("/kaggle/input/isic-2024-challenge/")
 FOLDS_PATH = Path("/kaggle/input/isic-scd-folds")
@@ -100,7 +89,7 @@ malignant_labels = ["BCC", "MEL", "SCC"]
 malignant_idx = [label2idx[label] for label in malignant_labels]
 
 
-def get_data_v1():
+def get_data():
     train_metadata = pd.read_csv(INPUT_PATH / "train-metadata.csv", low_memory=False)
     train_images = h5py.File(INPUT_PATH / "train-image.hdf5", mode="r")
     test_metadata = pd.read_csv(INPUT_PATH / "test-metadata.csv", low_memory=False)
@@ -113,7 +102,7 @@ def get_data_v1():
     return train_metadata, train_images, test_metadata, test_images
 
 
-def test_augment_v1(image_size, mean=None, std=None):
+def test_augment_multi(image_size, mean=None, std=None):
     if mean is not None and std is not None:
         normalize = A.Normalize(mean=mean, std=std, max_pixel_value=255.0, p=1.0)
     else:
@@ -124,7 +113,7 @@ def test_augment_v1(image_size, mean=None, std=None):
     return transform
 
 
-class ISICDatasetV1(Dataset):
+class ISICDatasetMulti(Dataset):
     def __init__(self, metadata, images, augment, infer=False):
         self.metadata = metadata
         self.images = images
@@ -148,13 +137,13 @@ class ISICDatasetV1(Dataset):
             return image, target
 
 
-class ISICNetV1(nn.Module):
+class ISICNetMulti(nn.Module):
     def __init__(
-            self,
-            model_name,
-            pretrained=True,
+        self,
+        model_name,
+        pretrained=True,
     ):
-        super(ISICNetV1, self).__init__()
+        super(ISICNetMulti, self).__init__()
         self.model = create_model(
             model_name=model_name,
             pretrained=pretrained,
@@ -197,7 +186,7 @@ def get_trans(img, iteration):
         return torch.rot90(img, 3, dims=[2, 3])
 
 
-def predict_v1(model, test_dataloader, accelerator, n_tta, log_interval=10):
+def predict_multi(model, test_dataloader, accelerator, n_tta, log_interval=10):
     model.eval()
     multi_test_probs = []
     total_steps = len(test_dataloader)
@@ -224,21 +213,30 @@ def predict_v1(model, test_dataloader, accelerator, n_tta, log_interval=10):
     return multi_test_probs, test_probs
 
 
-def main(model_name, version, model_dir, mixed_precision, image_size, batch_size, n_tta):
+def run(
+    model_name, version, model_dir
+):
     start_time = time.time()
-    (
-        train_metadata, train_images,
-        test_metadata, test_images
-    ) = get_data_v1()
+    print(f"Predicting {model_name}_{version}")
+    with open(model_dir / f"{model_name}_{version}_run_metadata.json", "r") as f:
+        run_metadata = json.load(f)
+    pprint(run_metadata["params"])
+    mixed_precision = run_metadata["params"]["mixed_precision"]
+    image_size = run_metadata["params"]["image_size"]
+    batch_size = run_metadata["params"]["val_batch_size"]
+    n_tta = run_metadata["params"]["n_tta"]
+    fold_column = run_metadata["params"]["fold_column"]
+
+    (train_metadata, train_images, test_metadata, test_images) = get_data()
 
     mean = None
     std = None
 
-    test_dataset = ISICDatasetV1(
+    test_dataset = ISICDatasetMulti(
         test_metadata,
         test_images,
-        augment=test_augment_v1(image_size, mean=mean, std=std),
-        infer=False
+        augment=test_augment_multi(image_size, mean=mean, std=std),
+        infer=True,
     )
     test_dataloader = DataLoader(
         test_dataset,
@@ -249,15 +247,17 @@ def main(model_name, version, model_dir, mixed_precision, image_size, batch_size
         pin_memory=True,
     )
     all_folds = np.unique(train_metadata[fold_column])
+    multi_test_probs = 0
+    test_probs = 0
     for fold in all_folds:
+        print(f"\nFold {fold}")
         accelerator = Accelerator(
             mixed_precision=mixed_precision,
         )
-        logger.info(f"Fold {fold}")
 
-        model = ISICNetV1(
+        model = ISICNetMulti(
             model_name=model_name,
-            pretrained=True,
+            pretrained=False,
         )
         model = model.to(accelerator.device)
 
@@ -265,14 +265,13 @@ def main(model_name, version, model_dir, mixed_precision, image_size, batch_size
             model,
             test_dataloader,
         ) = accelerator.prepare(
-            model, test_dataloader,
+            model,
+            test_dataloader,
         )
         model_filepath = f"{model_dir}/models/fold_{fold}"
         accelerator.load_state(model_filepath)
-        (
-            multi_test_probs_fold,
-            test_probs_fold
-        ) = predict_v1(
+
+        (multi_test_probs_fold, test_probs_fold) = predict_multi(
             model,
             test_dataloader,
             accelerator,
@@ -292,13 +291,12 @@ def main(model_name, version, model_dir, mixed_precision, image_size, batch_size
             f"oof_{model_name}_{version}": test_probs.flatten(),
         }
     )
-    oof_multi_df = pd.DataFrame(multi_test_probs,
-                                columns=[f"oof_{model_name}_{version}_{label}" for label in all_labels])
-    oof_df = pd.concat([oof_df, oof_multi_df], axis=1)
-    oof_df.to_csv(
-        f"oof_test_preds_{model_name}_{version}.csv",
-        index=False,
+    oof_multi_df = pd.DataFrame(
+        multi_test_probs,
+        columns=[f"oof_{model_name}_{version}_{label}" for label in all_labels],
     )
+    oof_df = pd.concat([oof_df, oof_multi_df], axis=1)
     runtime = time.time() - start_time
-    logger.info(f"Time taken: {runtime:.2f} s")
-    logger.info(f"Finished predicting")
+    print(f"Time taken: {runtime:.2f} s")
+    print(f"Finished predicting")
+    return oof_df, runtime

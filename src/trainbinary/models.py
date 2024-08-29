@@ -1,19 +1,22 @@
-from typing import List, Dict
+from typing import Dict, List
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from timm import create_model
 
 
-class ISICNet(nn.Module):
+class ISICNetBinary(nn.Module):
     def __init__(
         self,
         model_name,
         pretrained=True,
         use_meta=False,
-        cat_cols: List = None, cont_cols: List = None, emb_szs: Dict = None,
+        cat_cols: List = None,
+        cont_cols: List = None,
+        emb_szs: Dict = None,
     ):
-        super(ISICNet, self).__init__()
+        super(ISICNetBinary, self).__init__()
         self.model = create_model(
             model_name=model_name,
             pretrained=pretrained,
@@ -27,7 +30,9 @@ class ISICNet(nn.Module):
         if use_meta:
             self.linear = nn.Linear(in_dim, 256)
 
-            self.embeddings = nn.ModuleList([nn.Embedding(emb_szs[col][0], emb_szs[col][1]) for col in cat_cols])
+            self.embeddings = nn.ModuleList(
+                [nn.Embedding(emb_szs[col][0], emb_szs[col][1]) for col in cat_cols]
+            )
             self.embedding_dropout = nn.Dropout(0.1)
             n_emb = sum([emb_szs[col][1] for col in cat_cols])
             n_cont = len(cont_cols)

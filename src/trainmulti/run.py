@@ -1,7 +1,7 @@
-import os
 import argparse
 import json
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -16,15 +16,15 @@ from accelerate.utils import (
     set_seed,
 )
 from dataset import (
-    ISICDataset,
+    ISICDatasetMulti,
+    all_labels,
     dev_augment,
-    get_data,
+    get_data_multi,
     val_augment,
 )
 from engine import train_epoch, val_epoch
-from models import ISICNet
+from models import ISICNetMulti
 from torch.utils.data import DataLoader, RandomSampler
-from imblearn.under_sampling import RandomUnderSampler
 from utils import logger
 
 
@@ -63,6 +63,21 @@ def parse_args(input_args=None):
         default=None,
         required=True,
         help="The directory where the data is stored.",
+    )
+    parser.add_argument(
+        "--data_2020_dir",
+        type=str,
+        default=None,
+        help="The directory where the 2020 data is stored.",
+    )
+    parser.add_argument(
+        "--data_2019_dir",
+        type=str,
+        default=None,
+        help="The directory where the 2019 data is stored.",
+    )
+    parser.add_argument(
+        "--fold_column", type=str, default=None, required=True, help="Fold column name."
     )
     parser.add_argument(
         "--fold", type=int, default=None, required=True, help="Fold number."
@@ -106,12 +121,6 @@ def parse_args(input_args=None):
         "--n_tta", type=int, default=6, help="Number of test time augmentations."
     )
     parser.add_argument(
-        "--use_meta", action="store_true", default=False, help="Use metadata."
-    )
-    parser.add_argument(
-        "--down_sampling", action="store_true", default=False, help="Down sampling."
-    )
-    parser.add_argument(
         "--seed", type=int, default=None, help="A seed for reproducible training."
     )
     parser.add_argument(
@@ -130,7 +139,6 @@ def parse_args(input_args=None):
 
 
 def main(args):
-
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
     logging_dir = Path(args.model_dir, args.logging_dir)
@@ -154,48 +162,85 @@ def main(args):
     if args.seed is not None:
         set_seed(args.seed, deterministic=True)
 
-    train_metadata, train_images, cat_cols, cont_cols, emb_szs = get_data(args.data_dir)
+    (
+        train_metadata,
+        train_images,
+        train_metadata_2020,
+        train_images_2020,
+        train_metadata_2019,
+        train_images_2019,
+    ) = get_data_multi(args.data_dir, args.data_2020_dir, args.data_2019_dir)
 
-    fold_column = "fold"
-    dev_index = train_metadata[train_metadata[fold_column] != args.fold].index
-    val_index = train_metadata[train_metadata[fold_column] == args.fold].index
-
-    dev_df = train_metadata.loc[dev_index, :].reset_index(drop=True)
-    pos_samples = dev_df[dev_df["target"] == 1]
-    neg_samples = dev_df[dev_df["target"] == 0]
-    num_pos = len(pos_samples)
-    num_neg = num_pos * 100 if args.down_sampling else len(neg_samples)
+    if args.debug:
+        args.num_epochs = 2
+        dev_index = (
+            train_metadata[train_metadata[args.fold_column] != args.fold]
+            .sample(args.train_batch_size * 3, random_state=args.seed)
+            .index
+        )
+        val_index = (
+            train_metadata[train_metadata[args.fold_column] == args.fold]
+            .sample(args.val_batch_size * 10, random_state=args.seed)
+            .index
+        )
+    else:
+        dev_index = train_metadata[train_metadata[args.fold_column] != args.fold].index
+        val_index = train_metadata[train_metadata[args.fold_column] == args.fold].index
 
     mean = None
     std = None
 
-    dev_metadata = dev_df.copy()
-    dev_dataset = ISICDataset(
+    dev_metadata = train_metadata.loc[dev_index, :].reset_index(drop=True)
+    val_metadata = train_metadata.loc[val_index, :].reset_index(drop=True)
+
+    dev_dataset = ISICDatasetMulti(
         dev_metadata,
         train_images,
         augment=dev_augment(args.image_size, mean=mean, std=std),
-        use_meta=args.use_meta,
-        cat_cols=cat_cols,
-        cont_cols=cont_cols,
         infer=False,
     )
-    dev_dataloader = DataLoader(
-        dev_dataset,
-        batch_size=args.train_batch_size,
-        shuffle=True,
-        num_workers=args.num_workers,
-        pin_memory=True,
-    )
-
-    val_metadata = train_metadata.loc[val_index, :].reset_index(drop=True)
-    val_dataset = ISICDataset(
+    val_dataset = ISICDatasetMulti(
         val_metadata,
         train_images,
         augment=val_augment(args.image_size, mean=mean, std=std),
-        use_meta=args.use_meta,
-        cat_cols=cat_cols,
-        cont_cols=cont_cols,
         infer=False,
+    )
+
+    if not train_metadata_2020.empty:
+        logger.info("Using 2020 data")
+        if args.debug:
+            train_metadata_2020 = train_metadata_2020.sample(
+                args.train_batch_size * 1
+            ).reset_index(drop=True)
+        train_dataset_2020 = ISICDatasetMulti(
+            train_metadata_2020,
+            train_images_2020,
+            augment=dev_augment(args.image_size),
+            infer=False,
+        )
+        dev_dataset = torch.utils.data.ConcatDataset([dev_dataset, train_dataset_2020])
+    if not train_metadata_2019.empty:
+        logger.info("Using 2019 data")
+        if args.debug:
+            train_metadata_2019 = train_metadata_2019.sample(
+                args.train_batch_size * 1
+            ).reset_index(drop=True)
+        train_dataset_2019 = ISICDatasetMulti(
+            train_metadata_2019,
+            train_images_2019,
+            augment=dev_augment(args.image_size),
+            infer=False,
+        )
+        dev_dataset = torch.utils.data.ConcatDataset([dev_dataset, train_dataset_2019])
+
+    sampler = RandomSampler(dev_dataset)
+
+    dev_dataloader = DataLoader(
+        dev_dataset,
+        batch_size=args.train_batch_size,
+        sampler=sampler,
+        num_workers=args.num_workers,
+        pin_memory=True,
     )
     val_dataloader = DataLoader(
         val_dataset,
@@ -206,16 +251,12 @@ def main(args):
         pin_memory=True,
     )
 
-    model = ISICNet(
+    model = ISICNetMulti(
         model_name=args.model_name,
         pretrained=True,
-        use_meta=args.use_meta,
-        cat_cols=cat_cols,
-        cont_cols=cont_cols,
-        emb_szs=emb_szs,
     )
     model = model.to(accelerator.device)
-    criterion = nn.BCELoss()
+    criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.init_lr)
     lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
@@ -223,7 +264,7 @@ def main(args):
         max_lr=args.init_lr * 10,
         div_factor=10,
         epochs=args.num_epochs,
-        steps_per_epoch=(num_pos + num_neg) // args.train_batch_size,
+        steps_per_epoch=len(dev_dataloader),
     )
 
     (
@@ -240,6 +281,7 @@ def main(args):
     best_val_auc = 0
     best_val_pauc = 0
     best_epoch = 0
+    best_multi_val_probs = None
     best_val_probs = None
     train_losses = []
     val_losses = []
@@ -247,28 +289,6 @@ def main(args):
     val_aucs = []
     for epoch in range(1, args.num_epochs + 1):
         start_time = time.time()
-        if args.down_sampling:
-            rus = RandomUnderSampler(sampling_strategy={0: num_neg, 1: num_pos}, random_state=args.seed + (epoch * 100))
-            dev_metadata, _ = rus.fit_resample(dev_df, dev_df["target"])
-            dev_dataset = ISICDataset(
-                dev_metadata,
-                train_images,
-                augment=dev_augment(args.image_size, mean=mean, std=std),
-                use_meta=args.use_meta,
-                cat_cols=cat_cols,
-                cont_cols=cont_cols,
-                infer=False,
-            )
-            sampler = RandomSampler(dev_dataset)
-            dev_dataloader = DataLoader(
-                dev_dataset,
-                batch_size=args.train_batch_size,
-                sampler=sampler,
-                num_workers=args.num_workers,
-                pin_memory=True,
-            )
-            dev_dataloader = accelerator.prepare(dev_dataloader)
-
         lr = optimizer.param_groups[0]["lr"]
         logger.info(f"Fold {args.fold} | Epoch {epoch} | LR {lr:.7f}")
         train_loss = train_epoch(
@@ -279,12 +299,12 @@ def main(args):
             dev_dataloader,
             lr_scheduler,
             accelerator,
-            args.use_meta,
         )
         (
             val_loss,
             val_auc,
             val_pauc,
+            multi_val_probs,
             val_probs,
             val_targets,
         ) = val_epoch(
@@ -294,7 +314,6 @@ def main(args):
             val_dataloader,
             accelerator,
             args.n_tta,
-            args.use_meta,
         )
         train_losses.append(train_loss)
         val_losses.append(val_loss)
@@ -313,6 +332,7 @@ def main(args):
             best_val_auc = val_auc
             best_val_loss = val_loss
             best_epoch = epoch
+            best_multi_val_probs = multi_val_probs
             best_val_probs = val_probs
             output_dir = f"{args.model_dir}/models/fold_{args.fold}"
             accelerator.save_state(output_dir)
@@ -344,8 +364,16 @@ def main(args):
             f"oof_{args.model_name}_{args.version}": best_val_probs.flatten(),
         }
     )
+    oof_multi_df = pd.DataFrame(
+        best_multi_val_probs,
+        columns=[
+            f"oof_{args.model_name}_{args.version}_{label}" for label in all_labels
+        ],
+    )
+    oof_df = pd.concat([oof_df, oof_multi_df], axis=1)
+
     oof_df.to_csv(
-        f"{args.model_dir}/oof_preds_{args.model_name}_{args.version}_fold_{args.fold}.csv",
+        f"{args.model_dir}/oof_train_preds_{args.model_name}_{args.version}_fold_{args.fold}.csv",
         index=False,
     )
 
