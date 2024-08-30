@@ -3,10 +3,8 @@ import time
 import json
 from pprint import pprint
 from io import BytesIO
-from pathlib import Path
 
 import albumentations as A
-import h5py
 import numpy as np
 import pandas as pd
 import torch
@@ -18,12 +16,6 @@ from PIL import Image
 from timm import create_model
 from torch.utils.data import DataLoader, Dataset
 
-id_column = "isic_id"
-target_column = "target"
-group_column = "patient_id"
-
-INPUT_PATH = Path("/kaggle/input/isic-2024-challenge/")
-FOLDS_PATH = Path("/kaggle/input/isic-scd-folds")
 
 multi_target_mapping_dict = {
     "2024": {
@@ -87,19 +79,6 @@ all_labels = np.unique(
 label2idx = {label: idx for idx, label in enumerate(all_labels)}
 malignant_labels = ["BCC", "MEL", "SCC"]
 malignant_idx = [label2idx[label] for label in malignant_labels]
-
-
-def get_data():
-    train_metadata = pd.read_csv(INPUT_PATH / "train-metadata.csv", low_memory=False)
-    train_images = h5py.File(INPUT_PATH / "train-image.hdf5", mode="r")
-    test_metadata = pd.read_csv(INPUT_PATH / "test-metadata.csv", low_memory=False)
-    test_images = h5py.File(INPUT_PATH / "test-image.hdf5", mode="r")
-
-    folds_df = pd.read_csv(FOLDS_PATH / "folds.csv")
-    train_metadata = train_metadata.merge(
-        folds_df, on=["isic_id", "patient_id"], how="inner"
-    )
-    return train_metadata, train_images, test_metadata, test_images
 
 
 def test_augment_multi(image_size, mean=None, std=None):
@@ -214,20 +193,17 @@ def predict_multi(model, test_dataloader, accelerator, n_tta, log_interval=10):
 
 
 def run(
-    model_name, version, model_dir
+    test_metadata, test_images, model_name, version, model_dir, folds_to_run
 ):
+    print(f"Predicting for {model_name}_{version}")
     start_time = time.time()
-    print(f"Predicting {model_name}_{version}")
-    with open(model_dir / f"{model_name}_{version}_run_metadata.json", "r") as f:
+    with open(f"{model_dir}/{model_name}_{version}_run_metadata.json", "r") as f:
         run_metadata = json.load(f)
     pprint(run_metadata["params"])
     mixed_precision = run_metadata["params"]["mixed_precision"]
     image_size = run_metadata["params"]["image_size"]
     batch_size = run_metadata["params"]["val_batch_size"]
     n_tta = run_metadata["params"]["n_tta"]
-    fold_column = run_metadata["params"]["fold_column"]
-
-    (train_metadata, train_images, test_metadata, test_images) = get_data()
 
     mean = None
     std = None
@@ -246,10 +222,10 @@ def run(
         drop_last=False,
         pin_memory=True,
     )
-    all_folds = np.unique(train_metadata[fold_column])
+
     multi_test_probs = 0
     test_probs = 0
-    for fold in all_folds:
+    for fold in folds_to_run:
         print(f"\nFold {fold}")
         accelerator = Accelerator(
             mixed_precision=mixed_precision,
@@ -283,8 +259,8 @@ def run(
         else:
             multi_test_probs += multi_test_probs_fold
             test_probs += test_probs_fold
-    multi_test_probs /= len(all_folds)
-    test_probs /= len(all_folds)
+    multi_test_probs /= len(folds_to_run)
+    test_probs /= len(folds_to_run)
     oof_df = pd.DataFrame(
         {
             "isic_id": test_metadata["isic_id"],
@@ -298,5 +274,5 @@ def run(
     oof_df = pd.concat([oof_df, oof_multi_df], axis=1)
     runtime = time.time() - start_time
     print(f"Time taken: {runtime:.2f} s")
-    print(f"Finished predicting")
+    print(f"Predictions generated for {model_name}_{version}")
     return oof_df, runtime
