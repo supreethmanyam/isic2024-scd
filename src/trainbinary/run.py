@@ -24,6 +24,7 @@ from dataset import (
 from engine import train_epoch, val_epoch
 from imblearn.under_sampling import RandomUnderSampler
 from models import ISICNetBinary
+from safetensors import safe_open
 from torch.utils.data import DataLoader, RandomSampler
 from utils import logger
 
@@ -106,6 +107,7 @@ def parse_args(input_args=None):
         required=True,
         help="Learning rate.",
     )
+    parser.add_argument("--pretrained_weights_dir", type=str, default=None, help="Pretrained weights.")
     parser.add_argument("--num_epochs", type=int, default=2, help="Number of epochs.")
     parser.add_argument(
         "--n_tta", type=int, default=6, help="Number of test time augmentations."
@@ -222,17 +224,35 @@ def main(args):
         pin_memory=True,
     )
 
-    model = ISICNetBinary(
-        model_name=args.model_name,
-        pretrained=True,
-        use_meta=args.use_meta,
-        cat_cols=cat_cols,
-        cont_cols=cont_cols,
-        emb_szs=emb_szs,
-    )
+    if args.pretrained_weights_dir is not None:
+        logger.info(f"Loading pretrained weights from {args.pretrained_weights_dir}")
+        model = ISICNetBinary(
+            model_name=args.model_name,
+            pretrained=False,
+            use_meta=args.use_meta,
+            cat_cols=cat_cols,
+            cont_cols=cont_cols,
+            emb_szs=emb_szs,
+        )
+        tensors = {}
+        with safe_open(f"{args.pretrained_weights_dir}/models/fold_{args.fold}/model.safetensors", framework="pt") as f:
+            for key in f.keys():
+                if "model" in key:
+                    tensors[key] = f.get_tensor(key)
+        _ = model.load_state_dict(tensors, strict=False)
+        logger.info("Pretrained weights loaded successfully")
+    else:
+        model = ISICNetBinary(
+            model_name=args.model_name,
+            pretrained=True,
+            use_meta=args.use_meta,
+            cat_cols=cat_cols,
+            cont_cols=cont_cols,
+            emb_szs=emb_szs,
+        )
     model = model.to(accelerator.device)
     criterion = nn.BCELoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.init_lr, weight_decay=5e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.init_lr)
     lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
         pct_start=1 / args.num_epochs,

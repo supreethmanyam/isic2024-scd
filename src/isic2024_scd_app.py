@@ -348,13 +348,14 @@ class TrainBinaryConfig:
     mode: str = "trainbinary"
     fold_column: str = "gkf_fold"
     mixed_precision: bool = "fp16"
-    image_size: int = 92
+    image_size: int = 64
     train_batch_size: int = 64
     val_batch_size: int = 512
     num_workers: int = 8
     init_lr: float = 3e-5
+    load_checkpoint: bool = True
     num_epochs: int = 20
-    n_tta: int = 8
+    n_tta: int = 7
     down_sampling: bool = True
     sampling_rate: float = 0.01
     use_meta: bool = True
@@ -405,7 +406,7 @@ def trainbinary(model_name: str, version: str, fold: int):
         json.dump(metadata, f)
 
     data_dir = INPUT_DIR / "isic-2024-challenge"
-
+    pretrained_weights_dir = Path(WEIGHTS_DIR) / f"{model_name}_v1_trainmulti"
     write_basic_config(mixed_precision=config.mixed_precision)
     print("Launching training script")
     commands = (
@@ -429,6 +430,7 @@ def trainbinary(model_name: str, version: str, fold: int):
             f"--n_tta={config.n_tta}",
             f"--seed={config.seed}",
         ]
+        + ([f"--pretrained_weights_dir={pretrained_weights_dir}"] if config.load_checkpoint else [])
         + (["--use_meta"] if config.use_meta else [])
         + (
             [
