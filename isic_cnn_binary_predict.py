@@ -1,4 +1,5 @@
 # %% [code]
+# %% [code]
 import time
 import json
 from typing import List, Dict
@@ -389,7 +390,7 @@ def run(
         use_meta=use_meta,
         cat_cols=cat_cols,
         cont_cols=cont_cols,
-        infer=False,
+        infer=True,
     )
     test_dataloader = DataLoader(
         test_dataset,
