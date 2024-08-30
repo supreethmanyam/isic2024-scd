@@ -232,7 +232,7 @@ def main(args):
     )
     model = model.to(accelerator.device)
     criterion = nn.BCELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.init_lr)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.init_lr, weight_decay=5e-4)
     lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
         pct_start=1 / args.num_epochs,
