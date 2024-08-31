@@ -348,7 +348,7 @@ class TrainBinaryConfig:
     mode: str = "trainbinary"
     fold_column: str = "gkf_fold"
     mixed_precision: bool = "fp16"
-    image_size: int = 64
+    image_size: int = 92
     train_batch_size: int = 64
     val_batch_size: int = 512
     num_workers: int = 8
