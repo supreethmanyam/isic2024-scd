@@ -458,7 +458,7 @@ class TrainMultiConfig:
     num_workers: int = 8
     init_lr: float = 3e-5
     num_epochs: int = 20
-    n_tta: int = 8
+    n_tta: int = 7
     seed: int = 2022
 
     ext: str = "2020,2019"

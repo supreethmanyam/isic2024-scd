@@ -7,7 +7,8 @@ from timm import create_model
 
 
 model_factory = {
-    "tf_efficientnet_b1_ns": "tf_efficientnet_b1.ns_jft_in1k"
+    "tf_efficientnet_b1_ns": "tf_efficientnet_b1.ns_jft_in1k",
+    "mobilevitv2_200": "mobilevitv2_200.cvnets_in22k_ft_in1k"
 }
 
 
