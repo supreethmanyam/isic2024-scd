@@ -1,25 +1,25 @@
 modal run -d isic2024_scd_app.py::download_data
 
-modal run -d isic2024_scd_app.py::trainmulti --model-name tf_efficientnet_b1_ns --version v1 --fold 1
-#Link: https://modal.com/apps/supreethmanyam/main/ap-xFYIhA3sYozw9vTqvzWpLB
-modal run -d isic2024_scd_app.py::trainmulti --model-name tf_efficientnet_b1_ns --version v1 --fold 2
-#Link: https://modal.com/apps/supreethmanyam/main/ap-FnVitBxnuadvQPxrWMehAn
-modal run -d isic2024_scd_app.py::trainmulti --model-name tf_efficientnet_b1_ns --version v1 --fold 3
-#Link: https://modal.com/apps/supreethmanyam/main/ap-pmOfWpCeR1aLi7Lcyxu0pw
-modal run -d isic2024_scd_app.py::trainmulti --model-name tf_efficientnet_b1_ns --version v1 --fold 4
-#Link: https://modal.com/apps/supreethmanyam/main/ap-naFAALG1E3UbzYzXVsIgPj
-modal run -d isic2024_scd_app.py::trainmulti --model-name tf_efficientnet_b1_ns --version v1 --fold 5
-#Link: https://modal.com/apps/supreethmanyam/main/ap-kqaaoFxQYzxZ0fQvN8e7sK
-modal run -d isic2024_scd_app.py::upload_weights --model-name tf_efficientnet_b1_ns --version v1 --mode trainmulti
+modal run -d isic2024_scd_app.py::trainbinary --model-name mobilevitv2_200 --version v1 --fold 1
+#Link: https://modal.com/apps/supreethmanyam/main/ap-523S9zvmuIwBNhNmtVNOqw
+modal run -d isic2024_scd_app.py::trainbinary --model-name mobilevitv2_200 --version v1 --fold 2
+#Link: https://modal.com/apps/supreethmanyam/main/ap-H4JozfrGM4TVDKGG1a3s2J
+modal run -d isic2024_scd_app.py::trainbinary --model-name mobilevitv2_200 --version v1 --fold 3
+#Link: https://modal.com/apps/supreethmanyam/main/ap-KxATJgVWK662UUxZkJX08i
+modal run -d isic2024_scd_app.py::trainbinary --model-name mobilevitv2_200 --version v1 --fold 4
+#Link: https://modal.com/apps/supreethmanyam/main/ap-CmqIzgSbtpAgkVnlCVpwIT
+modal run -d isic2024_scd_app.py::trainbinary --model-name mobilevitv2_200 --version v1 --fold 5
+#Link: https://modal.com/apps/supreethmanyam/main/ap-h8A11Hd03xse38MktBdQXj
+modal run -d isic2024_scd_app.py::upload_weights --model-name mobilevitv2_200 --version v1 --mode trainbinary
 
-modal run -d isic2024_scd_app.py::trainmulti --model-name mobilevitv2_200 --version v1 --fold 1
-#Link: https://modal.com/apps/supreethmanyam/main/ap-XmDhdaTUIhd82pqag9uhD9
-modal run -d isic2024_scd_app.py::trainmulti --model-name mobilevitv2_200 --version v1 --fold 2
-#Link: https://modal.com/apps/supreethmanyam/main/ap-QbsZJcZoTMgzcfYYvqm9NK
-modal run -d isic2024_scd_app.py::trainmulti --model-name mobilevitv2_200 --version v1 --fold 3
-#Link: https://modal.com/apps/supreethmanyam/main/ap-eY7ItU1o3eaMrhDweZTBXa
-modal run -d isic2024_scd_app.py::trainmulti --model-name mobilevitv2_200 --version v1 --fold 4
-#Link: https://modal.com/apps/supreethmanyam/main/ap-VJSHLfTnJYghn7WQFg7QA2
-modal run -d isic2024_scd_app.py::trainmulti --model-name mobilevitv2_200 --version v1 --fold 5
-#Link: https://modal.com/apps/supreethmanyam/main/ap-yS8AhbcYF3qRHvlHyN3VIp
-modal run -d isic2024_scd_app.py::upload_weights --model-name mobilevitv2_200 --version v1 --mode trainmulti
+modal run -d isic2024_scd_app.py::trainbinary --model-name tf_efficientnet_b1_ns --version v1 --fold 1
+#Link: https://modal.com/apps/supreethmanyam/main/ap-G96h7IBg8hZycGbJsI0ijx
+modal run -d isic2024_scd_app.py::trainbinary --model-name tf_efficientnet_b1_ns --version v1 --fold 2
+#Link: https://modal.com/apps/supreethmanyam/main/ap-9js9z85pB4oNhFUVVLDaxb
+modal run -d isic2024_scd_app.py::trainbinary --model-name tf_efficientnet_b1_ns --version v1 --fold 3
+#Link: https://modal.com/apps/supreethmanyam/main/ap-sVHpARkp82UbNWVFarnVwo
+modal run -d isic2024_scd_app.py::trainbinary --model-name tf_efficientnet_b1_ns --version v1 --fold 4
+#Link: https://modal.com/apps/supreethmanyam/main/ap-iuqodFu6AHEdpf899b5Xxk
+modal run -d isic2024_scd_app.py::trainbinary --model-name tf_efficientnet_b1_ns --version v1 --fold 5
+#Link: https://modal.com/apps/supreethmanyam/main/ap-ZQdVfYlCktmWRNzfapvNAx
+modal run -d isic2024_scd_app.py::upload_weights --model-name tf_efficientnet_b1_ns --version v1 --mode trainbinary
