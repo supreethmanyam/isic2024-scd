@@ -1,4 +1,3 @@
-# %% [code]
 import time
 import json
 import joblib
@@ -101,7 +100,7 @@ def boosting_norm_feature(df, value_col, group_cols, err=1e-5):
     return df, feature_name
 
 
-def boosting_feature_engineering(df):
+def boosting_feature_engineering(df, err=1e-5):
     df["sex"] = df["sex"].fillna("missing_sex")
     df["anatom_site_general"] = df["anatom_site_general"].fillna("missing_anatom_site_general")
     df["tbp_tile_type"] = df["tbp_tile_type"].map({"3D: white": "white", "3D: XP": "XP"})
@@ -129,7 +128,18 @@ def boosting_feature_engineering(df):
     for col in cols_to_norm:
         df, feature_name = boosting_norm_feature(df, col, ["patient_id"])
         numerical_features += [feature_name]
+    
+    df["tbp_lv_H_diff"] = df["tbp_lv_H"] - df["tbp_lv_Hext"]
+    numerical_features += ["tbp_lv_H_diff"]
 
+    df["tbp_lv_A_diff"] =  df["tbp_lv_Aext"] - df["tbp_lv_A"]
+    df, feature_name = boosting_norm_feature(df, "tbp_lv_A_diff", ["patient_id", "tbp_lv_location"])
+    numerical_features += [feature_name]
+
+    df["tbp_lv_B_diff"] =  df["tbp_lv_Bext"] - df["tbp_lv_B"]
+    df, feature_name = boosting_norm_feature(df, "tbp_lv_B_diff", ["patient_id", "tbp_lv_location"])
+    numerical_features += [feature_name]
+    
     df["num_images"] = df["patient_id"].map(df.groupby("patient_id")["isic_id"].count())
     numerical_features += ["num_images"]
     return df, numerical_features
