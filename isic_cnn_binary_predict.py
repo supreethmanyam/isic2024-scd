@@ -1,5 +1,3 @@
-# %% [code]
-# %% [code]
 import time
 import json
 from typing import List, Dict
