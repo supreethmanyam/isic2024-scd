@@ -247,6 +247,12 @@ class ISICDatasetBinary(Dataset):
             return image, x_cat, x_cont, target
 
 
+model_factory = {
+    "tf_efficientnet_b1_ns": "tf_efficientnet_b1.ns_jft_in1k",
+    "mobilevitv2_200": "mobilevitv2_200.cvnets_in22k_ft_in1k"
+}
+
+
 class ISICNetBinary(nn.Module):
     def __init__(
         self,
@@ -258,6 +264,7 @@ class ISICNetBinary(nn.Module):
         emb_szs: Dict = None,
     ):
         super(ISICNetBinary, self).__init__()
+        model_name = model_factory.get(model_name, model_name)
         self.model = create_model(
             model_name=model_name,
             pretrained=pretrained,
