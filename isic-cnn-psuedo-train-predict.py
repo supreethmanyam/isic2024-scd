@@ -701,9 +701,8 @@ def main(args, train_metadata, train_images, test_psuedo_metadata, test_metadata
     tensors = {}
     with safe_open(f"{args.pretrained_weights_dir}/models/fold_{args.fold}/model.safetensors", framework="pt") as f:
         for key in f.keys():
-            if "model" in key:
-                tensors[key] = f.get_tensor(key)
-    _ = model.load_state_dict(tensors, strict=False)
+            tensors[key] = f.get_tensor(key)
+    _ = model.load_state_dict(tensors, strict=True)
     print("Pretrained weights loaded successfully")
 
     model = model.to(accelerator.device)
@@ -722,9 +721,10 @@ def main(args, train_metadata, train_images, test_psuedo_metadata, test_metadata
         model,
         optimizer,
         val_dataloader,
+        test_dataloader,
         lr_scheduler,
     ) = accelerator.prepare(
-        model, optimizer, val_dataloader, lr_scheduler
+        model, optimizer, val_dataloader, test_dataloader, lr_scheduler
     )
 
     best_val_loss = 0
