@@ -724,7 +724,6 @@ def main(args, train_metadata, train_images, test_psuedo_metadata, test_metadata
     (
         model,
         optimizer,
-        dev_dataloader,
         val_dataloader,
         lr_scheduler,
     ) = accelerator.prepare(
