@@ -859,18 +859,5 @@ def main(args, train_metadata, train_images, test_psuedo_metadata, test_metadata
         f" Best Val loss: {best_val_loss} |"
         f" Best epoch: {best_epoch}"
     )
-    fold_metadata = {
-        "fold": args.fold,
-        "best_epoch": best_epoch,
-        "best_val_auc": best_val_auc,
-        "best_val_pauc": best_val_pauc,
-        "best_val_loss": float(best_val_loss),
-        "train_losses": np.array(train_losses, dtype=float).tolist(),
-        "val_losses": np.array(val_losses, dtype=float).tolist(),
-        "val_paucs": val_paucs,
-        "val_aucs": val_aucs,
-    }
-    with open(f"{args.model_dir}/models/fold_{args.fold}/metadata.json", "w") as f:
-        json.dump(fold_metadata, f)
     print(f"Finished training fold {args.fold}")
     return oof_train_preds_df, oof_test_preds_df
