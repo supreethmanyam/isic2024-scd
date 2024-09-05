@@ -1,3 +1,4 @@
+import os
 import time
 from typing import List, Dict
 from io import BytesIO
@@ -613,6 +614,7 @@ def compute_pauc(y_true, y_pred, min_tpr: float = 0.80) -> float:
 
 def main(args, train_metadata, train_images, test_psuedo_metadata, test_metadata, test_images,
          emb_szs, cat_cols, cont_cols):
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
     accelerator_project_config = ProjectConfiguration(
         project_dir=args.model_dir
     )
@@ -624,7 +626,7 @@ def main(args, train_metadata, train_images, test_psuedo_metadata, test_metadata
     )
 
     if args.seed is not None:
-        set_seed(args.seed)
+        set_seed(args.seed, deterministic=True)
 
     dev_index = train_metadata[train_metadata[args.fold_column] != args.fold].index
     val_index = train_metadata[train_metadata[args.fold_column] == args.fold].index
