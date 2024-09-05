@@ -610,7 +610,8 @@ def compute_pauc(y_true, y_pred, min_tpr: float = 0.80) -> float:
     return partial_auc
 
 
-def main(args, train_metadata, train_images, test_psuedo_metadata, test_metadata, test_images):
+def main(args, train_metadata, train_images, test_psuedo_metadata, test_metadata, test_images,
+         emb_szs, cat_cols, cont_cols):
     accelerator_project_config = ProjectConfiguration(
         project_dir=args.model_dir
     )
@@ -623,11 +624,6 @@ def main(args, train_metadata, train_images, test_psuedo_metadata, test_metadata
 
     if args.seed is not None:
         set_seed(args.seed)
-
-    train_metadata, cat_cols, cont_cols = cnn_feature_engineering(train_metadata)
-    emb_szs = get_emb_szs(cat_cols)
-    test_psuedo_metadata, _, _ = cnn_feature_engineering(test_psuedo_metadata)
-    test_metadata, _, _ = cnn_feature_engineering(test_metadata)
 
     dev_index = train_metadata[train_metadata[args.fold_column] != args.fold].index
     val_index = train_metadata[train_metadata[args.fold_column] == args.fold].index
