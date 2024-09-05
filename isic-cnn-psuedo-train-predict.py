@@ -624,7 +624,7 @@ def main(args, train_metadata, train_images, test_psuedo_metadata, test_metadata
     )
 
     if args.seed is not None:
-        set_seed(args.seed)
+        set_seed(args.seed, deterministic=True)
 
     dev_index = train_metadata[train_metadata[args.fold_column] != args.fold].index
     val_index = train_metadata[train_metadata[args.fold_column] == args.fold].index
