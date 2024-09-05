@@ -348,7 +348,7 @@ class TrainBinaryConfig:
     mode: str = "trainbinary"
     fold_column: str = "gkf_fold"
     mixed_precision: bool = "fp16"
-    image_size: int = 92
+    image_size: int = 64
     train_batch_size: int = 64
     val_batch_size: int = 512
     num_workers: int = 8
@@ -357,8 +357,8 @@ class TrainBinaryConfig:
     num_epochs: int = 20
     n_tta: int = 7
     down_sampling: bool = True
-    sampling_rate: float = 0.01
-    use_meta: bool = True
+    sampling_rate: float = 0.02
+    use_meta: bool = False
     seed: int = 2022
 
     debug: bool = False
