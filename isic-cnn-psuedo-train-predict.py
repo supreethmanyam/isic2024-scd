@@ -1,4 +1,3 @@
-import json
 import time
 from typing import List, Dict
 from io import BytesIO
@@ -31,6 +30,8 @@ from timm import create_model
 from safetensors import safe_open
 
 from sklearn.metrics import auc, roc_auc_score, roc_curve
+
+from bayes_opt import BayesianOptimization
 
 
 feature_mapping_dict = {
@@ -857,3 +858,42 @@ def main(args, train_metadata, train_images, test_psuedo_metadata, test_metadata
     )
     print(f"Finished training fold {args.fold}")
     return oof_train_preds_df, oof_test_preds_df
+
+
+def blend_optimizer(oof_preds_df, oof_columns, folds, init_points=20, n_iter=100):
+    pbounds = {f"w{i:02}": (0.0, 10.0) for i in range(len(oof_columns))}
+
+    def dim_opt(oof_preds_df, *args):
+        weights = args
+        score = 0
+        for fold in folds:
+            fold_ensemble_preds = 0
+            for weight, oof_column in zip(weights, oof_columns):
+                fold_ensemble_preds += weight * oof_preds_df.loc[oof_preds_df["fold"] == fold, oof_column].rank(
+                    pct=True).values
+            score += compute_pauc(np.array(oof_preds_df.loc[oof_preds_df["fold"] == fold, "target"]),
+                                  fold_ensemble_preds)
+        return score / len(folds)
+
+    def q(**ws):
+        ws = tuple(ws.values())
+        return dim_opt(oof_preds_df, *ws)
+
+    optimizer = BayesianOptimization(
+        f=q,
+        pbounds=pbounds,
+        random_state=2022,
+    )
+
+    optimizer.maximize(
+        init_points=init_points,
+        n_iter=n_iter,
+    )
+
+    weights = {}
+    for i in range(len(oof_columns)):
+        weights[oof_columns[i]] = optimizer.max["params"][f'w{i:02}']
+
+    print(f"Best pAUC: {optimizer.max['target']}")
+    print(f"Best weights: {weights}")
+    return weights
